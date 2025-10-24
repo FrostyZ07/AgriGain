@@ -1,0 +1,74 @@
+[
+  {
+    "data_id": "rice_straw_punjab_paper",
+    "waste_type": "rice_straw",
+    "product_type": "paper_pulp",
+    "region": "punjab",
+    "avg_price_per_kg": 0.15,
+    "source": "Punjab Paper Mills Association",
+    "last_updated": "2024-01-15"
+  },
+  {
+    "data_id": "rice_straw_haryana_biomass",
+    "waste_type": "rice_straw",
+    "product_type": "biomass_fuel",
+    "region": "haryana",
+    "avg_price_per_kg": 0.12,
+    "source": "Haryana Renewable Energy Development Agency",
+    "last_updated": "2024-01-10"
+  },
+  {
+    "data_id": "wheat_straw_up_paper",
+    "waste_type": "wheat_straw",
+    "product_type": "paper_pulp",
+    "region": "uttar_pradesh",
+    "avg_price_per_kg": 0.18,
+    "source": "UP Pulp and Paper Mills",
+    "last_updated": "2024-01-12"
+  },
+  {
+    "data_id": "corn_husks_maharashtra_handicraft",
+    "waste_type": "corn_husks",
+    "product_type": "handicraft_material",
+    "region": "maharashtra",
+    "avg_price_per_kg": 0.25,
+    "source": "Maharashtra Handicrafts Board",
+    "last_updated": "2024-01-08"
+  },
+  {
+    "data_id": "sugarcane_bagasse_up_paper",
+    "waste_type": "sugarcane_bagasse",
+    "product_type": "paper_pulp",
+    "region": "uttar_pradesh",
+    "avg_price_per_kg": 0.20,
+    "source": "UP Sugar Mills Federation",
+    "last_updated": "2024-01-14"
+  },
+  {
+    "data_id": "coconut_coir_kerala_fiber",
+    "waste_type": "coconut_coir",
+    "product_type": "fiber_products",
+    "region": "kerala",
+    "avg_price_per_kg": 0.35,
+    "source": "Kerala Coir Board",
+    "last_updated": "2024-01-11"
+  },
+  {
+    "data_id": "rice_straw_general_compost",
+    "waste_type": "rice_straw",
+    "product_type": "compost_material",
+    "region": "general",
+    "avg_price_per_kg": 0.08,
+    "source": "National Composting Association",
+    "last_updated": "2024-01-09"
+  },
+  {
+    "data_id": "wheat_straw_general_animal_feed",
+    "waste_type": "wheat_straw",
+    "product_type": "animal_bedding",
+    "region": "general",
+    "avg_price_per_kg": 0.10,
+    "source": "Livestock Feed Association",
+    "last_updated": "2024-01-13"
+  }
+]
