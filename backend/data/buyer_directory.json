@@ -1,0 +1,142 @@
+[
+  {
+    "buyer_id": "buyer_001",
+    "buyer_name": "Green Energy Solutions Ltd.",
+    "region": "north_india",
+    "waste_types_accepted": ["rice_husks", "sugarcane_bagasse", "mixed_waste"],
+    "contact_info": "contact@greenenergy.in | +91-9876543210 | Delhi"
+  },
+  {
+    "buyer_id": "buyer_002",
+    "buyer_name": "EcoFuel Industries",
+    "region": "punjab",
+    "waste_types_accepted": ["rice_husks", "mixed_waste"],
+    "contact_info": "procurement@ecofuel.co.in | +91-9123456789 | Ludhiana"
+  },
+  {
+    "buyer_id": "buyer_003",
+    "buyer_name": "Maharashtra Paper Mills",
+    "region": "maharashtra",
+    "waste_types_accepted": ["sugarcane_bagasse"],
+    "contact_info": "rawmaterial@mahapaper.com | +91-9988776655 | Pune"
+  },
+  {
+    "buyer_id": "buyer_004",
+    "buyer_name": "Organic Fertilizers Co.",
+    "region": "all",
+    "waste_types_accepted": ["vegetable_trimmings", "mixed_waste"],
+    "contact_info": "sales@organicfert.in | +91-8877665544 | Bangalore"
+  },
+  {
+    "buyer_id": "buyer_005",
+    "buyer_name": "Premium Oils & Extracts",
+    "region": "south_india",
+    "waste_types_accepted": ["fruit_seeds"],
+    "contact_info": "purchase@premiumoils.co.in | +91-7766554433 | Chennai"
+  },
+  {
+    "buyer_id": "buyer_006",
+    "buyer_name": "BioChar Solutions India",
+    "region": "all",
+    "waste_types_accepted": ["mixed_waste", "rice_husks", "sugarcane_bagasse"],
+    "contact_info": "sourcing@biochar.in | +91-6655443322 | Mumbai"
+  },
+  {
+    "buyer_id": "buyer_007",
+    "buyer_name": "Animal Feed Processors",
+    "region": "west_bengal",
+    "waste_types_accepted": ["rice_husks", "mixed_waste"],
+    "contact_info": "buying@animalfeed.co.in | +91-5544332211 | Kolkata"
+  },
+  {
+    "buyer_id": "buyer_008",
+    "buyer_name": "Sustainable Construction Materials",
+    "region": "all",
+    "waste_types_accepted": ["rice_husks", "mixed_waste"],
+    "contact_info": "materials@sustainable.in | +91-4433221100 | Hyderabad"
+  },
+  {
+    "buyer_id": "buyer_009",
+    "buyer_name": "Natural Cosmetics Manufacturing",
+    "region": "tropical",
+    "waste_types_accepted": ["fruit_seeds"],
+    "contact_info": "ingredients@naturalcos.com | +91-3322110099 | Kochi"
+  },
+  {
+    "buyer_id": "buyer_010",
+    "buyer_name": "Compost & Soil Solutions",
+    "region": "all",
+    "waste_types_accepted": ["vegetable_trimmings", "mixed_waste"],
+    "contact_info": "procurement@compostsoil.in | +91-2211009988 | Ahmedabad"
+  },
+  {
+    "buyer_id": "buyer_011",
+    "buyer_name": "Renewable Biomass Energy",
+    "region": "uttar_pradesh",
+    "waste_types_accepted": ["sugarcane_bagasse", "rice_husks", "mixed_waste"],
+    "contact_info": "supply@renewbiomass.co.in | +91-1100998877 | Lucknow"
+  },
+  {
+    "buyer_id": "buyer_012",
+    "buyer_name": "Eco-Friendly Packaging Co.",
+    "region": "all",
+    "waste_types_accepted": ["sugarcane_bagasse", "mixed_waste"],
+    "contact_info": "materials@ecopack.in | +91-9988776655 | Gurgaon"
+  },
+  {
+    "buyer_id": "buyer_013",
+    "buyer_name": "Traditional Briquette Makers",
+    "region": "punjab",
+    "waste_types_accepted": ["rice_husks"],
+    "contact_info": "orders@traditionalfuel.in | +91-8877665544 | Amritsar"
+  },
+  {
+    "buyer_id": "buyer_014",
+    "buyer_name": "Vermicompost Enterprises",
+    "region": "all",
+    "waste_types_accepted": ["vegetable_trimmings"],
+    "contact_info": "worms@vermicomp.co.in | +91-7766554433 | Indore"
+  },
+  {
+    "buyer_id": "buyer_015",
+    "buyer_name": "Industrial Alcohol Manufacturing",
+    "region": "maharashtra",
+    "waste_types_accepted": ["sugarcane_bagasse", "mixed_waste"],
+    "contact_info": "feedstock@indalcohol.com | +91-6655443322 | Nashik"
+  },
+  {
+    "buyer_id": "buyer_016",
+    "buyer_name": "Organic Farming Supplies",
+    "region": "kerala",
+    "waste_types_accepted": ["vegetable_trimmings", "mixed_waste", "fruit_seeds"],
+    "contact_info": "organic@farmsupplies.in | +91-5544332211 | Thiruvananthapuram"
+  },
+  {
+    "buyer_id": "buyer_017",
+    "buyer_name": "Carbon Credit Aggregators",
+    "region": "all",
+    "waste_types_accepted": ["mixed_waste", "rice_husks", "sugarcane_bagasse"],
+    "contact_info": "carbon@creditagg.co.in | +91-4433221100 | Bangalore"
+  },
+  {
+    "buyer_id": "buyer_018",
+    "buyer_name": "Handmade Paper Industries",
+    "region": "rajasthan",
+    "waste_types_accepted": ["sugarcane_bagasse", "mixed_waste"],
+    "contact_info": "paper@handmade.in | +91-3322110099 | Jaipur"
+  },
+  {
+    "buyer_id": "buyer_019",
+    "buyer_name": "Essential Oils Distillery",
+    "region": "himachal_pradesh",
+    "waste_types_accepted": ["fruit_seeds", "mixed_waste"],
+    "contact_info": "distill@essentialoils.co.in | +91-2211009988 | Shimla"
+  },
+  {
+    "buyer_id": "buyer_020",
+    "buyer_name": "Rural Energy Cooperatives",
+    "region": "all",
+    "waste_types_accepted": ["rice_husks", "sugarcane_bagasse", "mixed_waste", "vegetable_trimmings"],
+    "contact_info": "energy@ruralcoop.in | +91-1100998877 | Multiple Locations"
+  }
+]

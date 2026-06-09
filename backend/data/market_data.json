@@ -1,0 +1,164 @@
+[
+  {
+    "data_id": "market_001",
+    "waste_type": "rice_husks",
+    "product_type": "briquettes",
+    "region": "north_india",
+    "avg_price_per_kg": 12.50,
+    "source": "Agricultural Marketing Board",
+    "last_updated": "2024-10-20"
+  },
+  {
+    "data_id": "market_002",
+    "waste_type": "rice_husks",
+    "product_type": "briquettes",
+    "region": "south_india",
+    "avg_price_per_kg": 14.00,
+    "source": "Regional Commodity Exchange",
+    "last_updated": "2024-10-18"
+  },
+  {
+    "data_id": "market_003",
+    "waste_type": "rice_husks",
+    "product_type": "animal_feed",
+    "region": "all",
+    "avg_price_per_kg": 8.75,
+    "source": "Feed Industry Association",
+    "last_updated": "2024-10-22"
+  },
+  {
+    "data_id": "market_004",
+    "waste_type": "sugarcane_bagasse",
+    "product_type": "paper_pulp",
+    "region": "maharashtra",
+    "avg_price_per_kg": 18.00,
+    "source": "Paper Mill Consortium",
+    "last_updated": "2024-10-19"
+  },
+  {
+    "data_id": "market_005",
+    "waste_type": "sugarcane_bagasse",
+    "product_type": "paper_pulp",
+    "region": "uttar_pradesh",
+    "avg_price_per_kg": 16.50,
+    "source": "State Agricultural Department",
+    "last_updated": "2024-10-21"
+  },
+  {
+    "data_id": "market_006",
+    "waste_type": "vegetable_trimmings",
+    "product_type": "compost",
+    "region": "all",
+    "avg_price_per_kg": 6.00,
+    "source": "Organic Farming Association",
+    "last_updated": "2024-10-23"
+  },
+  {
+    "data_id": "market_007",
+    "waste_type": "vegetable_trimmings",
+    "product_type": "liquid_fertilizer",
+    "region": "all",
+    "avg_price_per_kg": 25.00,
+    "source": "Fertilizer Dealers Network",
+    "last_updated": "2024-10-20"
+  },
+  {
+    "data_id": "market_008",
+    "waste_type": "fruit_seeds",
+    "product_type": "seed_oil",
+    "region": "tropical",
+    "avg_price_per_kg": 450.00,
+    "source": "Essential Oils Trade Board",
+    "last_updated": "2024-10-17"
+  },
+  {
+    "data_id": "market_009",
+    "waste_type": "mixed_waste",
+    "product_type": "biochar",
+    "region": "all",
+    "avg_price_per_kg": 35.00,
+    "source": "Carbon Credit Exchange",
+    "last_updated": "2024-10-22"
+  },
+  {
+    "data_id": "market_010",
+    "waste_type": "rice_husks",
+    "product_type": "raw_material",
+    "region": "punjab",
+    "avg_price_per_kg": 2.50,
+    "source": "Local Agricultural Markets",
+    "last_updated": "2024-10-24"
+  },
+  {
+    "data_id": "market_011",
+    "waste_type": "rice_husks",
+    "product_type": "raw_material",
+    "region": "west_bengal",
+    "avg_price_per_kg": 3.00,
+    "source": "Farmer Producer Organizations",
+    "last_updated": "2024-10-23"
+  },
+  {
+    "data_id": "market_012",
+    "waste_type": "sugarcane_bagasse",
+    "product_type": "raw_material",
+    "region": "maharashtra",
+    "avg_price_per_kg": 1.80,
+    "source": "Sugar Mill Associations",
+    "last_updated": "2024-10-21"
+  },
+  {
+    "data_id": "market_013",
+    "waste_type": "vegetable_trimmings",
+    "product_type": "raw_material",
+    "region": "all",
+    "avg_price_per_kg": 0.50,
+    "source": "Vegetable Market Committees",
+    "last_updated": "2024-10-24"
+  },
+  {
+    "data_id": "market_014",
+    "waste_type": "mixed_waste",
+    "product_type": "biomass_pellets",
+    "region": "all",
+    "avg_price_per_kg": 15.00,
+    "source": "Renewable Energy Board",
+    "last_updated": "2024-10-20"
+  },
+  {
+    "data_id": "market_015",
+    "waste_type": "fruit_seeds",
+    "product_type": "raw_material",
+    "region": "south_india",
+    "avg_price_per_kg": 4.00,
+    "source": "Fruit Processing Units",
+    "last_updated": "2024-10-19"
+  },
+  {
+    "data_id": "market_016",
+    "waste_type": "rice_husks",
+    "product_type": "construction_material",
+    "region": "all",
+    "avg_price_per_kg": 5.50,
+    "source": "Building Materials Association",
+    "last_updated": "2024-10-18"
+  },
+  {
+    "data_id": "market_017",
+    "waste_type": "sugarcane_bagasse",
+    "product_type": "biofuel",
+    "region": "all",
+    "avg_price_per_kg": 22.00,
+    "source": "Biofuel Manufacturers Consortium",
+    "last_updated": "2024-10-22"
+  },
+  {
+    "data_id": "market_018",
+    "waste_type": "vegetable_trimmings",
+    "product_type": "vermicompost",
+    "region": "all",
+    "avg_price_per_kg": 12.00,
+    "source": "Vermicomposting Networks",
+    "last_updated": "2024-10-21"
+  }
+]

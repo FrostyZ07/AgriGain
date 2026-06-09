@@ -1,0 +1,122 @@
+[
+  {
+    "model_id": "quant_001",
+    "waste_type": "rice_husks",
+    "unit_name": "sacks",
+    "avg_kg_per_unit": 25.0
+  },
+  {
+    "model_id": "quant_002",
+    "waste_type": "rice_husks",
+    "unit_name": "wheelbarrows",
+    "avg_kg_per_unit": 15.0
+  },
+  {
+    "model_id": "quant_003",
+    "waste_type": "rice_husks",
+    "unit_name": "crates",
+    "avg_kg_per_unit": 20.0
+  },
+  {
+    "model_id": "quant_004",
+    "waste_type": "rice_husks",
+    "unit_name": "baskets",
+    "avg_kg_per_unit": 8.0
+  },
+  {
+    "model_id": "quant_005",
+    "waste_type": "sugarcane_bagasse",
+    "unit_name": "sacks",
+    "avg_kg_per_unit": 30.0
+  },
+  {
+    "model_id": "quant_006",
+    "waste_type": "sugarcane_bagasse",
+    "unit_name": "wheelbarrows",
+    "avg_kg_per_unit": 40.0
+  },
+  {
+    "model_id": "quant_007",
+    "waste_type": "sugarcane_bagasse",
+    "unit_name": "crates",
+    "avg_kg_per_unit": 35.0
+  },
+  {
+    "model_id": "quant_008",
+    "waste_type": "sugarcane_bagasse",
+    "unit_name": "baskets",
+    "avg_kg_per_unit": 12.0
+  },
+  {
+    "model_id": "quant_009",
+    "waste_type": "vegetable_trimmings",
+    "unit_name": "sacks",
+    "avg_kg_per_unit": 20.0
+  },
+  {
+    "model_id": "quant_010",
+    "waste_type": "vegetable_trimmings",
+    "unit_name": "wheelbarrows",
+    "avg_kg_per_unit": 25.0
+  },
+  {
+    "model_id": "quant_011",
+    "waste_type": "vegetable_trimmings",
+    "unit_name": "crates",
+    "avg_kg_per_unit": 18.0
+  },
+  {
+    "model_id": "quant_012",
+    "waste_type": "vegetable_trimmings",
+    "unit_name": "baskets",
+    "avg_kg_per_unit": 10.0
+  },
+  {
+    "model_id": "quant_013",
+    "waste_type": "fruit_seeds",
+    "unit_name": "sacks",
+    "avg_kg_per_unit": 35.0
+  },
+  {
+    "model_id": "quant_014",
+    "waste_type": "fruit_seeds",
+    "unit_name": "wheelbarrows",
+    "avg_kg_per_unit": 45.0
+  },
+  {
+    "model_id": "quant_015",
+    "waste_type": "fruit_seeds",
+    "unit_name": "crates",
+    "avg_kg_per_unit": 40.0
+  },
+  {
+    "model_id": "quant_016",
+    "waste_type": "fruit_seeds",
+    "unit_name": "baskets",
+    "avg_kg_per_unit": 15.0
+  },
+  {
+    "model_id": "quant_017",
+    "waste_type": "mixed_waste",
+    "unit_name": "sacks",
+    "avg_kg_per_unit": 22.0
+  },
+  {
+    "model_id": "quant_018",
+    "waste_type": "mixed_waste",
+    "unit_name": "wheelbarrows",
+    "avg_kg_per_unit": 28.0
+  },
+  {
+    "model_id": "quant_019",
+    "waste_type": "mixed_waste",
+    "unit_name": "crates",
+    "avg_kg_per_unit": 25.0
+  },
+  {
+    "model_id": "quant_020",
+    "waste_type": "mixed_waste",
+    "unit_name": "baskets",
+    "avg_kg_per_unit": 12.0
+  }
+]

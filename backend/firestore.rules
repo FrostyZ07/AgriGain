@@ -1,0 +1,82 @@
+// Firebase Firestore Security Rules for Agricultural Waste Management
+// These rules secure the Firestore database according to the devplan structure
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Root artifacts collection - allow read for authenticated users
+    match /artifacts/{appId} {
+      allow read: if true; // Public read for app metadata
+      allow write: if false; // Prevent direct writes to app level
+      
+      // User-specific data under artifacts/{appId}/users/{userId}/
+      match /users/{userId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+        
+        // Waste logs - user can only access their own logs
+        match /waste_logs/{wasteLogId} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+          
+          // Validate waste log structure
+          allow create: if request.auth != null 
+                       && request.auth.uid == userId
+                       && validateWasteLog(request.resource.data);
+          
+          allow update: if request.auth != null 
+                       && request.auth.uid == userId
+                       && validateWasteLog(request.resource.data)
+                       && resource.data.user_id == request.auth.uid;
+        }
+        
+        // User opportunities - generated opportunities for user's waste
+        match /opportunities/{opportunityId} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+          
+          // Validate opportunity structure
+          allow create: if request.auth != null 
+                       && request.auth.uid == userId
+                       && validateOpportunity(request.resource.data);
+        }
+        
+        // User profile and preferences
+        match /profile {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+    }
+    
+    // Global collections that are read-only for all authenticated users
+    match /global_data/{document} {
+      allow read: if request.auth != null;
+      allow write: if false; // Admin only (not covered by these rules)
+    }
+    
+    // Analytics and aggregated data - read only
+    match /analytics/{document} {
+      allow read: if request.auth != null;
+      allow write: if false; // Backend service only
+    }
+  }
+  
+  // Validation functions
+  function validateWasteLog(data) {
+    return data.keys().hasAll(['waste_log_id', 'user_id', 'waste_type', 'unit_name', 'quantity', 'estimated_kg', 'timestamp'])
+           && data.user_id is string
+           && data.waste_type is string
+           && data.unit_name is string
+           && data.quantity is number
+           && data.estimated_kg is number
+           && data.quantity > 0
+           && data.estimated_kg > 0
+           && data.timestamp is timestamp;
+  }
+  
+  function validateOpportunity(data) {
+    return data.keys().hasAll(['opportunity_id', 'user_id', 'waste_log_id', 'opportunities_text', 'timestamp'])
+           && data.user_id is string
+           && data.waste_log_id is string  
+           && data.opportunities_text is string
+           && data.timestamp is timestamp;
+  }
+}

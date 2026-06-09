@@ -1,0 +1,50 @@
+[
+  {
+    "sheet_id": "safety_001",
+    "waste_type": "rice_husks",
+    "content": "Rice Husk Safety Guidelines: Always wear protective masks when handling dry rice husks to prevent respiratory irritation from dust particles. Store in well-ventilated areas to prevent mold formation. When processing for briquettes, ensure adequate ventilation during mixing and molding phases. Avoid prolonged skin contact with wet husks as they may cause minor skin irritation. During burning or pyrolysis processes, maintain safe distance and have fire extinguishing equipment readily available. Rice husks are generally non-toxic but can be slip hazards when wet. Properly dispose of any moldy or contaminated husks. When using binding agents like sodium hydroxide, wear gloves and eye protection.",
+    "source": "Agricultural Safety Board India"
+  },
+  {
+    "sheet_id": "safety_002",
+    "waste_type": "sugarcane_bagasse",
+    "content": "Sugarcane Bagasse Safety Protocol: Fresh bagasse should be processed immediately to prevent fermentation which can produce harmful gases. Wear protective clothing and gloves when handling as dry bagasse fibers can cause skin abrasions. Ensure proper ventilation in storage areas as decomposing bagasse releases carbon dioxide. When using chemical treatments for pulp production, follow strict safety protocols including eye protection, gloves, and ventilated workspace. Bagasse dust is combustible - avoid sparks and open flames in processing areas. Monitor for signs of spontaneous combustion in large storage piles. Workers should use dust masks to prevent inhalation of fine particles. Wet bagasse can become slippery - maintain safe walking surfaces.",
+    "source": "Sugar Industry Safety Council"
+  },
+  {
+    "sheet_id": "safety_003",
+    "waste_type": "vegetable_trimmings",
+    "content": "Vegetable Waste Handling Safety: Use clean containers and tools to prevent contamination and pathogen growth. Avoid handling decomposing vegetable matter with bare hands - use gloves to prevent bacterial infections. Compost piles can reach high temperatures - use thermometer and avoid direct contact with hot compost core. Ensure proper drainage to prevent stagnant water that breeds disease vectors. When preparing liquid fertilizers, maintain sanitary conditions and proper fermentation vessel sealing. Wash hands thoroughly after handling any vegetable waste. Store processing equipment in clean, dry conditions. Be aware that rotting vegetables can produce methane gas in enclosed spaces.",
+    "source": "Food Safety and Standards Authority"
+  },
+  {
+    "sheet_id": "safety_004",
+    "waste_type": "fruit_seeds",
+    "content": "Fruit Seed Processing Safety: Many fruit seeds contain natural compounds that require careful handling. Wear eye protection when cracking hard seed shells to prevent injury from flying fragments. Some seeds may contain cyanogenic compounds - ensure proper ventilation during processing. When roasting seeds, monitor temperature carefully to prevent overheating and toxic smoke production. Oil extraction equipment should be regularly cleaned and maintained to prevent rancidity and contamination. Store extracted oils in proper containers away from heat and light. Workers should wear protective clothing to prevent oil stains and skin contact with concentrated extracts. Disposal of seed waste should follow environmental guidelines.",
+    "source": "Essential Oils Safety Institute"
+  },
+  {
+    "sheet_id": "safety_005",
+    "waste_type": "mixed_waste",
+    "content": "Mixed Agricultural Waste Safety Protocol: Identify all components of mixed waste before processing to assess potential hazards. Separate any materials that may contain pesticide residues or chemical treatments. Use appropriate personal protective equipment including gloves, masks, and eye protection. When creating biochar through pyrolysis, ensure proper ventilation and fire safety measures. Monitor for toxic gas production during anaerobic decomposition processes. Mixed waste may contain sharp objects or foreign materials - inspect carefully before handling. Different waste types may react unpredictably when combined - test small batches first. Maintain good hygiene practices and wash hands thoroughly after handling any mixed agricultural waste.",
+    "source": "Agricultural Waste Management Authority"
+  },
+  {
+    "sheet_id": "safety_006",
+    "waste_type": "rice_husks",
+    "content": "Rice Husk Storage and Transport Safety: Store rice husks in dry, well-ventilated buildings to prevent mold and spontaneous combustion. Stack bags or containers to allow air circulation and regular inspection. Transport vehicles should be covered to prevent dust dispersion and contamination. Loading and unloading should be done slowly to minimize dust clouds. Personnel should wear respiratory protection during bulk handling operations. Regularly inspect storage areas for signs of pest infestation or mold growth. Keep storage areas clean and free from ignition sources. During monsoon season, monitor moisture levels closely as wet husks can ferment rapidly and produce dangerous gases.",
+    "source": "Rice Processing Industry Association"
+  },
+  {
+    "sheet_id": "safety_007",
+    "waste_type": "sugarcane_bagasse",
+    "content": "Chemical Processing Safety for Bagasse: When using sodium hydroxide for pulping, store chemicals in appropriate containers away from moisture and acids. Emergency eye wash stations should be available in processing areas. Neutralize alkaline solutions properly before disposal to prevent environmental damage. Workers handling chemicals must receive proper training on material safety data sheets. Mixing vessels should be made of appropriate materials that resist chemical corrosion. Maintain proper labeling of all chemical containers and processing equipment. Have appropriate spill cleanup materials readily available. Monitor pH levels regularly during processing to ensure safe operating conditions.",
+    "source": "Chemical Safety in Agriculture Board"
+  },
+  {
+    "sheet_id": "safety_008",
+    "waste_type": "vegetable_trimmings",
+    "content": "Composting Safety Standards: Maintain proper carbon to nitrogen ratios to prevent anaerobic conditions that produce harmful gases. Turn compost piles regularly using proper tools to prevent back injury. Monitor internal temperature to ensure pathogen destruction while preventing excessive heat buildup. Keep compost areas away from water sources to prevent contamination. Use protective equipment when handling finished compost to avoid dust inhalation. Screen finished compost to remove any non-biodegradable materials. Educate workers on recognizing signs of improper fermentation such as strong ammonia odors or slimy textures. Store finished compost in covered areas to maintain quality and prevent nutrient loss.",
+    "source": "Organic Agriculture Certification Body"
+  }
+]

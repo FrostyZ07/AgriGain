@@ -1,0 +1,26 @@
+test_id,waste_type,total_kg,region,expected_categories,description
+1,rice_husks,100,punjab,"on_farm_use,local_sale,process_and_sell",Small scale rice farmer with husks from 2-3 harvests
+2,rice_husks,500,punjab,"process_and_sell,local_sale",Medium scale rice processing mill with regular husk output
+3,rice_husks,1500,punjab,"process_and_sell,local_sale",Large scale rice mill with high volume husk waste
+4,rice_husks,50,all,"on_farm_use,local_sale",Very small farmer with limited husks
+5,sugarcane_bagasse,200,maharashtra,"process_and_sell,local_sale",Sugar mill with moderate bagasse output
+6,sugarcane_bagasse,1000,maharashtra,"process_and_sell",Large sugar mill with high volume bagasse
+7,sugarcane_bagasse,80,maharashtra,"on_farm_use,local_sale",Small sugarcane farmer with leftover bagasse
+8,vegetable_trimmings,30,all,"on_farm_use",Small vegetable vendor with daily trimmings
+9,vegetable_trimmings,150,all,"process_and_sell,local_sale",Medium vegetable market with regular trimmings
+10,vegetable_trimmings,500,all,"process_and_sell",Large vegetable processing facility
+11,corn_stalks,300,rajasthan,"process_and_sell,local_sale",Corn farmer after harvest season
+12,corn_stalks,800,rajasthan,"process_and_sell",Multiple corn farmers with combined stalks
+13,corn_stalks,120,rajasthan,"on_farm_use,local_sale",Small corn farmer with limited stalks
+14,wheat_straw,400,punjab,"process_and_sell,local_sale",Wheat farmer with post-harvest straw
+15,wheat_straw,1200,punjab,"process_and_sell",Large wheat farm with high volume straw
+16,wheat_straw,150,punjab,"on_farm_use,local_sale",Small wheat farmer with limited straw
+17,coconut_husks,60,kerala,"on_farm_use,local_sale",Coconut farmer with regular husk waste
+18,coconut_husks,250,kerala,"process_and_sell,local_sale",Medium coconut processing unit
+19,cotton_stalks,180,gujarat,"process_and_sell,local_sale",Cotton farmer after harvest
+20,cotton_stalks,600,gujarat,"process_and_sell",Multiple cotton farmers with combined stalks
+21,banana_leaves,40,tamil_nadu,"on_farm_use,local_sale",Banana plantation with leaf waste
+22,banana_leaves,120,tamil_nadu,"local_sale",Commercial banana cultivation
+23,rice_husks,25,all,"on_farm_use",Very small quantity test case
+24,sugarcane_bagasse,2000,all,"process_and_sell",Very large quantity test case
+25,vegetable_trimmings,300,mumbai,"process_and_sell,local_sale",Urban vegetable market scenario

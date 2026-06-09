@@ -1,0 +1,42 @@
+# Core web framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.24.0
+
+# Database and vector store
+chromadb>=0.4.0
+firebase-admin>=6.0.0
+
+# Machine Learning and NLP
+sentence-transformers>=2.0.0
+google-generativeai>=0.3.0
+
+# Data processing
+pydantic>=2.0.0
+python-multipart
+pytest
+pytest-asyncio
+
+# HTTP client
+httpx>=0.25.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Development
+black>=23.0.0
+flake8>=6.0.0
+
+# Production deployment
+gunicorn>=21.2.0
+google-cloud-storage>=2.10.0
+
+# Additional ML dependencies for Cloud Run
+numpy>=1.24.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+torch>=2.0.0
+transformers>=4.33.0

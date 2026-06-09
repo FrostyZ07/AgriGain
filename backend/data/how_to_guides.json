@@ -1,0 +1,206 @@
+[
+  {
+    "guide_id": "guide_001",
+    "waste_type": "rice_husks",
+    "title": "Rice Husk Briquette Production",
+    "description": "Convert rice husks into high-energy briquettes for cooking fuel and heating applications. This process helps reduce waste while creating valuable fuel products.",
+    "steps": [
+      "Collect and dry rice husks in the sun for 2-3 days until moisture content is below 15%",
+      "Mix rice husks with binding agent (clay soil or cassava starch) in ratio 10:1",
+      "Add small amount of water to form moldable paste consistency",
+      "Use briquette press or manual mold to shape into uniform blocks",
+      "Dry briquettes in shade for 24-48 hours until completely hardened",
+      "Test burn quality - good briquettes should burn steadily with minimal smoke",
+      "Package in waterproof containers for storage and sale"
+    ],
+    "materials_needed": [
+      "Rice husks (10 kg)",
+      "Clay soil or cassava starch (1 kg)",
+      "Briquette press or wooden molds",
+      "Water bucket",
+      "Drying racks or mats",
+      "Waterproof storage containers"
+    ],
+    "difficulty": "medium",
+    "region": "all"
+  },
+  {
+    "guide_id": "guide_002",
+    "waste_type": "vegetable_trimmings",
+    "title": "Vegetable Waste Composting",
+    "description": "Transform vegetable trimmings and kitchen scraps into nutrient-rich compost for organic farming and soil improvement.",
+    "steps": [
+      "Collect vegetable peels, leaves, and non-meat kitchen scraps daily",
+      "Chop large pieces into smaller 2-3 inch segments for faster decomposition",
+      "Create compost pile in shaded area with good drainage",
+      "Layer green waste (vegetable scraps) with brown materials (dry leaves, paper)",
+      "Maintain 3:1 brown to green ratio for optimal decomposition",
+      "Turn pile weekly with pitchfork to ensure proper aeration",
+      "Keep moisture level like wrung-out sponge - add water if too dry",
+      "Monitor temperature - should heat up to 130-160°F in center",
+      "Compost ready in 2-3 months when dark, crumbly, and earthy-smelling"
+    ],
+    "materials_needed": [
+      "Vegetable trimmings and kitchen scraps",
+      "Dry leaves, straw, or shredded paper",
+      "Pitchfork or shovel for turning",
+      "Water source",
+      "Thermometer (optional)",
+      "Wire mesh or wooden pallets for bin construction"
+    ],
+    "difficulty": "easy",
+    "region": "all"
+  },
+  {
+    "guide_id": "guide_003",
+    "waste_type": "sugarcane_bagasse",
+    "title": "Bagasse Paper Pulp Production",
+    "description": "Process sugarcane bagasse into paper pulp for manufacturing eco-friendly paper products and packaging materials.",
+    "steps": [
+      "Collect fresh bagasse immediately after juice extraction to prevent fermentation",
+      "Remove any remaining sugar by washing bagasse thoroughly with clean water",
+      "Chop bagasse into uniform 1-2 inch pieces using mechanical chopper",
+      "Soak chopped bagasse in water for 24 hours to soften fibers",
+      "Boil bagasse in large pot with 2% sodium hydroxide solution for 3-4 hours",
+      "Rinse thoroughly until water runs clear to remove chemicals",
+      "Beat pulp mechanically or manually until fibers separate completely",
+      "Screen pulp through fine mesh to remove impurities and lumps",
+      "Press pulp to remove excess water and form sheets",
+      "Air dry pulp sheets for 24-48 hours before packaging"
+    ],
+    "materials_needed": [
+      "Fresh sugarcane bagasse (20 kg)",
+      "Sodium hydroxide (caustic soda) - 400g",
+      "Large cooking pot (50L capacity)",
+      "Mechanical chopper or sharp knife",
+      "Fine mesh screens",
+      "Wooden paddles for stirring",
+      "Pulp press or heavy weights",
+      "Drying racks"
+    ],
+    "difficulty": "hard",
+    "region": "all"
+  },
+  {
+    "guide_id": "guide_004",
+    "waste_type": "fruit_seeds",
+    "title": "Fruit Seed Oil Extraction",
+    "description": "Extract valuable oils from fruit seeds for cosmetic, culinary, and industrial applications using mechanical pressing methods.",
+    "steps": [
+      "Collect seeds from fresh fruits, removing all pulp and flesh completely",
+      "Wash seeds thoroughly and dry in sun for 5-7 days until completely moisture-free",
+      "Crack hard seed shells using hammer or mechanical cracker for enclosed seeds",
+      "Roast seeds lightly at 60°C for 30 minutes to improve oil yield",
+      "Grind roasted seeds into fine paste using oil expeller or heavy-duty grinder",
+      "Apply pressure using mechanical press or traditional methods to extract oil",
+      "Filter extracted oil through clean cloth to remove seed particles",
+      "Allow oil to settle for 24 hours, then decant clear oil from sediment",
+      "Store oil in dark glass bottles away from heat and sunlight",
+      "Test oil quality and document yield rates for business planning"
+    ],
+    "materials_needed": [
+      "Fresh fruit seeds (5-10 kg depending on variety)",
+      "Seed crackers or hammer for hard shells",
+      "Roasting pan or low-temperature oven",
+      "Oil expeller or mechanical press",
+      "Fine grinding equipment",
+      "Clean filtering cloths",
+      "Dark glass bottles for storage",
+      "Weighing scale for yield measurement"
+    ],
+    "difficulty": "hard",
+    "region": "tropical"
+  },
+  {
+    "guide_id": "guide_005",
+    "waste_type": "mixed_waste",
+    "title": "Biochar Production from Mixed Agricultural Waste",
+    "description": "Create biochar from various agricultural wastes through controlled pyrolysis for soil enhancement and carbon sequestration.",
+    "steps": [
+      "Collect diverse agricultural waste: crop residues, pruned branches, husks, and shells",
+      "Dry all materials thoroughly to reduce moisture content below 20%",
+      "Size all materials uniformly - chop to 2-4 inch pieces",
+      "Build simple pyrolysis kiln using metal drums with controlled air inlet",
+      "Fill kiln with prepared waste materials, leaving space for air circulation",
+      "Start controlled burn with small amount of kindling at bottom",
+      "Maintain temperature between 300-500°C for 2-4 hours",
+      "Monitor smoke color - white smoke indicates water evaporation, blue smoke shows pyrolysis",
+      "Seal air inlets when smoke turns yellow to prevent complete combustion",
+      "Allow kiln to cool completely before opening (12-24 hours)",
+      "Crush biochar to desired size and test pH levels",
+      "Mix with compost or apply directly to soil as amendment"
+    ],
+    "materials_needed": [
+      "Mixed agricultural waste (50-100 kg)",
+      "Metal drums or kiln construction materials",
+      "Temperature monitoring equipment",
+      "Crushing tools (hammers, grinders)",
+      "pH testing kit",
+      "Protective equipment (gloves, masks)",
+      "Fire safety equipment"
+    ],
+    "difficulty": "medium",
+    "region": "all"
+  },
+  {
+    "guide_id": "guide_006",
+    "waste_type": "rice_husks",
+    "title": "Rice Husk Animal Feed Preparation",
+    "description": "Process rice husks into nutritious animal feed supplement through fermentation and mixing with protein sources.",
+    "steps": [
+      "Collect fresh rice husks and remove any stones or foreign materials",
+      "Steam rice husks for 30 minutes to soften and sterilize",
+      "Cool steamed husks to room temperature in clean environment",
+      "Mix with molasses (5% by weight) to improve palatability",
+      "Add protein supplement like fish meal or soybean meal (10% by weight)",
+      "Inoculate with beneficial bacteria (EM or similar probiotics)",
+      "Ferment mixture in sealed containers for 7-14 days",
+      "Turn mixture every 2-3 days to ensure even fermentation",
+      "Test pH levels - should be between 3.8-4.2 when ready",
+      "Dry fermented feed to 12-15% moisture content for storage",
+      "Package in breathable bags and store in cool, dry place"
+    ],
+    "materials_needed": [
+      "Rice husks (20 kg)",
+      "Molasses (1 kg)",
+      "Protein supplement (2 kg)",
+      "Probiotic inoculant",
+      "Steam source or large pot",
+      "Fermentation containers with lids",
+      "pH testing strips",
+      "Drying equipment or racks"
+    ],
+    "difficulty": "medium",
+    "region": "all"
+  },
+  {
+    "guide_id": "guide_007",
+    "waste_type": "vegetable_trimmings",
+    "title": "Liquid Fertilizer from Vegetable Waste",
+    "description": "Create nutrient-rich liquid fertilizer through anaerobic fermentation of vegetable trimmings and organic matter.",
+    "steps": [
+      "Collect fresh vegetable trimmings, avoiding diseased or rotten materials",
+      "Chop all materials into small pieces (1 inch or smaller)",
+      "Fill large container 1/3 with chopped vegetable waste",
+      "Add brown sugar or jaggery (10% of waste weight) to accelerate fermentation",
+      "Pour clean water until container is 80% full, leaving space for gas expansion",
+      "Cover tightly with lid and seal all air gaps completely",
+      "Store in shaded area at ambient temperature (25-35°C optimal)",
+      "Allow fermentation for 3-4 weeks, releasing gas pressure weekly",
+      "Strain liquid through fine mesh when fermentation is complete",
+      "Dilute concentrated fertilizer 1:10 with water before application",
+      "Apply to plants during early morning or late evening"
+    ],
+    "materials_needed": [
+      "Fresh vegetable trimmings (5 kg)",
+      "Brown sugar or jaggery (500g)",
+      "Large fermentation container with tight lid",
+      "Clean water",
+      "Fine straining mesh",
+      "Storage bottles for concentrate",
+      "Measuring containers"
+    ],
+    "difficulty": "easy",
+    "region": "all"
+  }
+]
