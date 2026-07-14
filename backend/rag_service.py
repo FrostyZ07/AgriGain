@@ -28,7 +28,7 @@ class RAGService:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+                model_name = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
                 self.model = genai.GenerativeModel(model_name)
                 self.genai = genai
                 logger.info(f"Gemini API initialized successfully (model: {model_name})")
@@ -247,23 +247,77 @@ class RAGService:
             context = context[:max_context_length] + "... [context truncated for performance]"
             logger.warning(f"Context truncated to {max_context_length} characters")
         
-        system_prompt = f"""You are Agri-Gain, an expert AI assistant specializing in {waste_type.replace('_', ' ')} waste monetization. Provide concise, actionable advice ONLY for {waste_type.replace('_', ' ')}.
+        system_prompt = f"""
+You are Agri-Gain, an AI assistant specializing in agricultural waste monetization.
 
-CRITICAL: Use ONLY the provided context. Focus EXCLUSIVELY on {waste_type.replace('_', ' ')}.
+Your task is to recommend opportunities ONLY using the information present in the supplied context.
 
-Structure into three categories:
-1. On-Farm Use: Direct applications on farm
-2. Local Sale: Selling to nearby buyers
-3. Process & Sell: Value-added processing
+CRITICAL RULES
 
-For each opportunity, provide: steps, difficulty, revenue estimates (if in context), safety notes, equipment needed."""
-        
-        user_prompt = f"""I have {total_kg} kg of {waste_type.replace('_', ' ')} in {region}.
+1. NEVER invent buyers, companies, phone numbers, prices, technologies or revenue.
+2. If information is missing from the context, write: "Not available in the provided knowledge base."
+3. Focus ONLY on {waste_type.replace('_', ' ')}.
+4. Tailor recommendations to a quantity of {total_kg} kg.
+5. Consider the region: {region}.
+6. If no suitable recommendation exists for a section (On-Farm Use, Local Sale, or Process & Sell), write exactly:
+   "Opportunity: No suitable opportunity found in the provided knowledge base."
+   Do NOT output the other sub-fields (Steps, Difficulty, Safety, etc.) for that section.
+7. If a suitable recommendation exists, you must output ALL fields for that section.
 
-Context:
+Return your answer in EXACTLY this format, using double newlines for spacing:
+
+# 1. On-Farm Use
+(If no opportunity exists: "Opportunity: No suitable opportunity found in the provided knowledge base.")
+(Otherwise:
+Opportunity: [Value]
+Steps: [Value]
+Difficulty: [Value]
+Equipment Needed: [Value]
+Safety Notes: [Value]
+Estimated Revenue: [Value]
+)
+
+# 2. Local Sale
+(If no opportunity exists: "Opportunity: No suitable opportunity found in the provided knowledge base.")
+(Otherwise:
+Opportunity: [Value]
+Potential Buyers: [Value]
+Steps: [Value]
+Transport Requirements: [Value]
+Estimated Revenue: [Value]
+Safety Notes: [Value]
+)
+
+# 3. Process & Sell
+(If no opportunity exists: "Opportunity: No suitable opportunity found in the provided knowledge base.")
+(Otherwise:
+Opportunity: [Value]
+Processing Method: [Value]
+Steps: [Value]
+Equipment Needed: [Value]
+Scale Suitability: [Value]
+Estimated Revenue: [Value]
+Safety Notes: [Value]
+)
+
+Only use information supported by the provided context.
+Do not use outside knowledge.
+Never generate company names, phone numbers, email addresses, addresses, buyers or prices unless they appear verbatim in the provided context.
+If the context does not contain a buyer, write:
+"Buyer information not available in the provided knowledge base."
+"""
+
+        user_prompt = f"""
+Waste Type: {waste_type.replace('_', ' ')}
+Quantity: {total_kg} kg
+Region: {region}
+
+Retrieved Knowledge Base Context:
+
 {context}
 
-Provide specific opportunities in the three categories above."""
+Generate recommendations following the exact output format.
+"""
         
         try:
             # Use ThreadPoolExecutor to add timeout to synchronous Gemini call
@@ -272,7 +326,7 @@ Provide specific opportunities in the three categories above."""
                     f"{system_prompt}\n\n{user_prompt}",
                     generation_config=self.genai.types.GenerationConfig(
                         temperature=0.3,
-                        max_output_tokens=1200,  # Reduced from 1500 for faster generation
+                        max_output_tokens=2000,  # Reduced from 1500 for faster generation
                         top_p=0.9
                     )
                 )
@@ -284,7 +338,7 @@ Provide specific opportunities in the three categories above."""
                     result = future.result(timeout=timeout_seconds)
                     if result:
                         logger.info(f"Generated {len(result)} characters of opportunities text")
-                        return result
+                        return self.clean_opportunities_text(result)
                     else:
                         logger.warning("Gemini returned empty response")
                         return "Unable to generate opportunities - please try again"
@@ -296,6 +350,36 @@ Provide specific opportunities in the three categories above."""
         except Exception as e:
             logger.error(f"Error generating opportunities with Gemini: {e}")
             return f"Error generating opportunities: {str(e)}"
+
+    def clean_opportunities_text(self, text: str) -> str:
+        """Clean up the generated opportunities text to avoid verbose empty fields."""
+        if not text:
+            return text
+            
+        modified_text = text
+        if modified_text.startswith("# "):
+            modified_text = "\n" + modified_text
+            
+        parts = modified_text.split("\n# ")
+        if len(parts) <= 1:
+            return text
+            
+        cleaned_parts = [parts[0]]
+        
+        for part in parts[1:]:
+            lines = part.split("\n")
+            header = "# " + lines[0]
+            content_lines = lines[1:]
+            content = "\n".join(content_lines).strip()
+            content_lower = content.lower()
+            
+            # If the section has no opportunity found or has too many 'not available' lines, condense it
+            if "no suitable opportunity found" in content_lower or content_lower.count("not available in the provided knowledge base") >= 4:
+                cleaned_parts.append(f"{header}\nOpportunity: No suitable opportunity found in the provided knowledge base.\n")
+            else:
+                cleaned_parts.append(f"{header}\n{content}\n")
+                
+        return "\n".join(cleaned_parts).strip()
     
     def get_grounded_opportunities(self, waste_type: str, total_kg: float, region: str) -> Dict[str, Any]:
         """Main method to get grounded opportunities using the complete RAG pipeline."""
@@ -322,9 +406,16 @@ Provide specific opportunities in the three categories above."""
             context = self.build_context_string(retrieved_docs, waste_type)
             
             # Step 4: Generate opportunities
-            opportunities_text = self.generate_opportunities_with_gemini(
-                context, waste_type, total_kg, region
-            )
+            
+            if self.model:
+                opportunities_text = self.generate_opportunities_with_gemini(
+                context,
+                waste_type,
+                total_kg,
+                region
+                )
+            else:
+                opportunities_text = context
             
             processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
             

@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+/* ─── Agri-Gain Design Tokens ─── */
+:root {
+  --ag-bg: #f7f2ea;
+  --ag-surface: #f7f2ea;
+  --ag-border: #e5e5df;
+  --ag-ink: #1a2421;
+  --ag-muted: #5c6b64;
+  --ag-green: #2d5a3c;
+  --ag-green-dark: #21442d;
+  --ag-terracotta: #b85c38;
+  --ag-ochre: #e8a343;
+  --ag-wait: #8e9b95;
+  --ag-radius: 2px;
+}
+
+@theme inline {
+  --color-ag-bg: var(--ag-bg);
+  --color-ag-surface: var(--ag-surface);
+  --color-ag-border: var(--ag-border);
+  --color-ag-ink: var(--ag-ink);
+  --color-ag-muted: var(--ag-muted);
+  --color-ag-green: var(--ag-green);
+  --color-ag-green-dark: var(--ag-green-dark);
+  --color-ag-terracotta: var(--ag-terracotta);
+  --color-ag-ochre: var(--ag-ochre);
+  --color-ag-wait: var(--ag-wait);
+  --font-display: "Cabinet Grotesk", "IBM Plex Sans", sans-serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono-ag: "IBM Plex Mono", monospace;
+}
+
+/* ─── Base Styles ─── */
+body {
+  margin: 0;
+  background: var(--ag-bg);
+  color: var(--ag-ink);
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--ag-green);
+  color: var(--ag-bg);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d5d5cd;
+  border-radius: 3px;
+}
+
+/* ─── Animations ─── */
+@keyframes ag-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ag-fade-up {
+  animation: ag-fade-up 0.35s ease-out both;
+}
+
+@keyframes ag-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.ag-pulse {
+  animation: ag-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ag-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.ag-slide-in-right {
+  animation: ag-slide-in-right 0.3s ease-out both;
+}
+
+@keyframes ag-count-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ag-count-up {
+  animation: ag-count-up 0.4s ease-out both;
+}
+
+@keyframes ag-width-grow {
+  from { width: 0%; }
+}
+
+.ag-width-grow {
+  animation: ag-width-grow 0.6s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ag-fade-up,
+  .ag-pulse,
+  .ag-slide-in-right,
+  .ag-count-up,
+  .ag-width-grow {
+    animation: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

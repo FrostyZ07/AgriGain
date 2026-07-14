@@ -26,6 +26,10 @@ from datetime import datetime
 from pathlib import Path
 import argparse
 import statistics
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 # Import our modules
 import chromadb
@@ -196,10 +200,18 @@ class RAGEvaluator:
                 'evaluation_time': time.time() - start_time,
                 'timestamp': datetime.now().isoformat()
             }
-            
-            logger.info(f"  ✓ Categories found: {quality_metrics['found_categories']}")
+            logger.info(f"  ✓ Expected Categories: {query['expected_categories']}")
+            logger.info(f"  ✓ Categories Found: {quality_metrics['found_categories']}")
+            logger.info(f"  ✓ Precision: {quality_metrics['category_accuracy']['precision']:.2f}")
+            logger.info(f"  ✓ Recall: {quality_metrics['category_accuracy']['recall']:.2f}")
             logger.info(f"  ✓ F1 Score: {quality_metrics['category_accuracy']['f1_score']:.2f}")
             logger.info(f"  ✓ Sources used: {quality_metrics['sources_used']}")
+            logger.info(f"  ✓ Context Length: {quality_metrics['context_length']} chars")
+            logger.info(f"  ✓ Response Length: {quality_metrics['response_length']} chars")
+
+            logger.info("----- Gemini Response -----")
+            logger.info(response['opportunities_text'])
+            logger.info("---------------------------")
             
             return evaluation
             
@@ -228,7 +240,7 @@ class RAGEvaluator:
             self.evaluation_results.append(result)
             
             # Brief pause between requests to avoid overwhelming the system
-            time.sleep(0.5)
+            time.sleep(5)
         
         logger.info(f"Evaluation completed in {time.time() - self.start_time:.2f} seconds")
         return self.evaluation_results
@@ -360,7 +372,7 @@ def initialize_rag_service() -> Optional[RAGService]:
         rag_service = RAGService(
             chroma_collection=collection,
             embedding_model=embedding_model,
-            gemini_api_key=None  # Use None for evaluation to test grounding only
+            gemini_api_key=os.getenv("GEMINI_API_KEY")  # Use None for evaluation to test grounding only
         )
         
         logger.info("RAG service initialized successfully for evaluation")
@@ -410,7 +422,7 @@ def main():
     # Run evaluation
     if not args.summary_only:
         print("\n🔄 Running RAG evaluation...")
-        results = evaluator.run_full_evaluation(test_queries)
+        results = evaluator.run_full_evaluation(test_queries[:5])
         
         # Save detailed results
         with open(args.output_file, 'w') as f:

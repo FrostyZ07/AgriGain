@@ -35,6 +35,25 @@ export interface StructuredOpportunities {
   process_and_sell: string[]
 }
 
+export interface CalculationMetrics {
+  estimated_waste: number
+  unit: string
+  estimated_revenue: number
+  transportation_cost: number
+  storage_cost: number
+  roi: number
+  biochar_yield: number
+  biogas_estimate: number
+  co2_saved: number
+  price_resolved_from_search?: boolean
+  resolved_price_per_kg?: number
+}
+
+export interface MarketIntel {
+  market_price: Record<string, string>
+  buyers: string[]
+}
+
 export interface OpportunitiesResponse {
   opportunities_text: string
   structured_opportunities?: StructuredOpportunities
@@ -45,6 +64,13 @@ export interface OpportunitiesResponse {
   waste_info: Record<string, any>
   user_region?: string
   error?: string
+  
+  // Agentic AI fields
+  status?: string
+  calculations?: CalculationMetrics
+  market_information?: MarketIntel
+  citations?: string[]
+  confidence_score?: number
 }
 
 export interface HowToGuide {
@@ -187,7 +213,8 @@ class ApiClient {
       }
       
       return data as T
-    } catch (error) {
+    } catch (err) {
+      const error = err as any
       // Handle different types of errors
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
         throw {
@@ -246,7 +273,7 @@ class ApiClient {
     const timeoutId = setTimeout(() => controller.abort(), 90000)
     
     try {
-      const response = await fetch(`${this.baseUrl}/get_opportunities`, {
+      const response = await fetch(`${this.baseUrl}/api/v2/recommend`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -263,7 +290,8 @@ class ApiClient {
       }
       
       return await response.json() as OpportunitiesResponse
-    } catch (error) {
+    } catch (err) {
+      const error = err as any
       clearTimeout(timeoutId)
       
       if (error instanceof TypeError && error.message === 'Failed to fetch') {

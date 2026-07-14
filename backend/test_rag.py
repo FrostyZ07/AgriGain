@@ -51,7 +51,8 @@ def test_rag_pipeline():
         
         # 5. Test vector database querying
         print("5. Testing vector database query...")
-        retrieved_docs = rag_service.query_vector_database(queries[:5], n_results_per_query=2)
+        retrieved_docs = rag_service.query_vector_database(queries=queries[:5],waste_type="rice_husks",n_results_per_query=2)
+        assert len(retrieved_docs) > 0,"No dos retrieved"
         print(f"   Retrieved {len(retrieved_docs)} documents")
         for doc in retrieved_docs[:3]:  # Show first 3
             source_type = doc['metadata'].get('source_type', 'unknown')
@@ -59,7 +60,7 @@ def test_rag_pipeline():
         
         # 6. Test context building
         print("6. Testing context building...")
-        context = rag_service.build_context_string(retrieved_docs)
+        context = rag_service.build_context_string(retrieved_docs,waste_type="rice_husks")
         print(f"   Built context of {len(context)} characters")
         print(f"   Context preview: {context[:200]}...")
         
@@ -73,6 +74,10 @@ def test_rag_pipeline():
         print(f"   - Context length: {result.get('context_length', 0)}")
         print(f"   - Queries generated: {result.get('queries_generated', 0)}")
         print(f"   - Opportunities text length: {len(result.get('opportunities_text', ''))}")
+        print("\nGenerated Response")
+        print("-" * 60)
+        print(result.get("opportunities_text", ""))
+        print("-" * 60)
         
         if result.get('error'):
             print(f"   - Error: {result.get('error')}")

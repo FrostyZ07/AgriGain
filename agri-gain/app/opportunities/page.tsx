@@ -372,6 +372,137 @@ function OpportunitiesPageContent() {
           </Card>
         )}
 
+        {/* Quantitative Metrics Dashboard */}
+        {!loading && aiOpportunities && aiOpportunities.calculations && (
+          <div className="mb-10 animate-in fade-in slide-in-from-bottom-3 duration-500">
+            <h2 className="text-xl font-bold text-foreground mb-4 flex items-center gap-2">
+              <Database className="w-5 h-5 text-primary" />
+              {t("opportunities.quantitativeAnalysis") || "Quantitative Estimates"}
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Estimated Waste */}
+              <Card className="p-5 border-border bg-card/60 backdrop-blur-sm relative overflow-hidden group hover:shadow-md transition">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Estimated Waste</span>
+                  <span className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500 font-bold text-sm">
+                    🌱
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-foreground mb-1">
+                  {aiOpportunities.calculations.estimated_waste?.toLocaleString() ?? "0"} {aiOpportunities.calculations.unit ?? "kg"}
+                </div>
+                <p className="text-xs text-muted-foreground">Generated from logged metrics</p>
+              </Card>
+
+              {/* Estimated Revenue */}
+              <Card className="p-5 border-border bg-card/60 backdrop-blur-sm relative overflow-hidden group hover:shadow-md transition">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Revenue Potential</span>
+                  <span className="p-2 bg-yellow-500/10 rounded-lg text-yellow-500 font-bold text-sm">
+                    ₹
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-emerald-500 mb-1">
+                  ₹{aiOpportunities.calculations.estimated_revenue?.toLocaleString() ?? "0"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {aiOpportunities.calculations.price_resolved_from_search ? (
+                    <span className="text-emerald-500 font-medium">Using live market rate</span>
+                  ) : (
+                    "Based on historical average"
+                  )}
+                </p>
+              </Card>
+
+              {/* ROI */}
+              <Card className="p-5 border-border bg-card/60 backdrop-blur-sm relative overflow-hidden group hover:shadow-md transition">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Est. Return Multiple</span>
+                  <span className="p-2 bg-blue-500/10 rounded-lg text-blue-500 font-bold text-sm">
+                    📈
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-foreground mb-1">
+                  {aiOpportunities.calculations.roi !== undefined && aiOpportunities.calculations.roi > 0 
+                    ? `${aiOpportunities.calculations.roi.toFixed(1)}x` 
+                    : "0.0x"}
+                </div>
+                <p className="text-xs text-muted-foreground">Net gains vs handling costs</p>
+              </Card>
+
+              {/* Carbon Offset */}
+              <Card className="p-5 border-border bg-card/60 backdrop-blur-sm relative overflow-hidden group hover:shadow-md transition">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Carbon Savings</span>
+                  <span className="p-2 bg-cyan-500/10 rounded-lg text-cyan-500 font-bold text-sm">
+                    ☁️
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-cyan-500 mb-1">
+                  {aiOpportunities.calculations.co2_saved?.toLocaleString() ?? "0"} kg
+                </div>
+                <p className="text-xs text-muted-foreground">CO2 emissions prevented</p>
+              </Card>
+            </div>
+            
+            {/* Secondary Estimates */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+              <Card className="p-4 border border-border/80 bg-card/40 text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Potential Biochar Yield:</span>
+                <span className="font-semibold text-foreground">{aiOpportunities.calculations.biochar_yield?.toLocaleString() ?? "0"} kg</span>
+              </Card>
+              <Card className="p-4 border border-border/80 bg-card/40 text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Estimated Biogas Potential:</span>
+                <span className="font-semibold text-foreground">{aiOpportunities.calculations.biogas_estimate?.toLocaleString() ?? "0"} m³</span>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* Real-time Market Intelligence */}
+        {!loading && aiOpportunities && aiOpportunities.market_information && (
+          <div className="mb-10 animate-in fade-in slide-in-from-bottom-3 duration-500 delay-100">
+            <h2 className="text-xl font-bold text-foreground mb-4 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-yellow-500" />
+              {t("opportunities.marketIntelligenceTitle") || "Real-Time Market Intelligence"}
+            </h2>
+            <Card className="p-6 border-border bg-card/85 backdrop-blur-md">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Live Scraped Prices</h3>
+                  {Object.keys(aiOpportunities.market_information.market_price || {}).length > 0 ? (
+                    <div className="space-y-2">
+                      {Object.entries(aiOpportunities.market_information.market_price).map(([item, price]) => (
+                        <div key={item} className="flex justify-between py-2 border-b border-border text-sm">
+                          <span className="capitalize font-medium text-foreground">{item.replace(/_/g, ' ')}</span>
+                          <span className="font-semibold text-emerald-500">{price}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No live prices found in search results.</p>
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Identified Local Buyers</h3>
+                  {aiOpportunities.market_information.buyers && aiOpportunities.market_information.buyers.length > 0 ? (
+                    <ul className="space-y-2">
+                      {aiOpportunities.market_information.buyers.map((buyer, idx) => (
+                        <li key={idx} className="flex items-center gap-2 text-sm text-foreground bg-muted/40 p-2 rounded-lg">
+                          <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                          {buyer}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No specific buyer factories detected in search results. Check recommendations below.</p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
         {/* Filters */}
         {!loading && (
           <div className="mb-8 space-y-4">

@@ -144,9 +144,10 @@ export function AIInsight() {
     setMessages(prev => [...prev, userMessage])
     setInputValue("")
     setIsLoading(true)
+    let request: AIInsightRequest | undefined = undefined
 
     try {
-      const request: AIInsightRequest = {
+      request = {
         question: question.trim(),
         language: selectedLanguage,
         waste_type: selectedWasteType || undefined,
@@ -359,23 +360,23 @@ export function AIInsight() {
                 
                 {message.type === 'ai' && message.metadata && (
                   <div className="flex flex-wrap gap-2 mt-2 text-xs text-muted-foreground">
-                    {message.metadata.sources_used > 0 && (
+                    {(message.metadata.sources_used ?? 0) > 0 && (
                       <Badge variant="outline" className="text-xs">
                         <Database className="w-3 h-3 mr-1" />
                         {message.metadata.sources_used} sources
                       </Badge>
                     )}
                     
-                    {message.metadata.confidence_score > 0 && (
+                    {(message.metadata.confidence_score ?? 0) > 0 && (
                       <Badge 
                         variant="outline" 
                         className={`text-xs ${
-                          message.metadata.confidence_score >= 0.8 ? 'text-green-600' :
-                          message.metadata.confidence_score >= 0.5 ? 'text-yellow-600' : 'text-red-600'
+                          (message.metadata.confidence_score ?? 0) >= 0.8 ? 'text-green-600' :
+                          (message.metadata.confidence_score ?? 0) >= 0.5 ? 'text-yellow-600' : 'text-red-600'
                         }`}
                       >
                         <TrendingUp className="w-3 h-3 mr-1" />
-                        {Math.round(message.metadata.confidence_score * 100)}% confident
+                        {Math.round((message.metadata.confidence_score ?? 0) * 100)}% confident
                       </Badge>
                     )}
                     
