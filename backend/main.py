@@ -32,10 +32,10 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 import json
 import chromadb
-from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from quantify import QuantificationService
 from rag_service import RAGService
+from embedding import get_embedding_function
 
 # Load environment variables
 load_dotenv()
@@ -147,28 +147,45 @@ def initialize_firebase():
     app_state.firestore_db = firestore.client()
     logger.info("Firestore client initialized")
 
-def initialize_chroma():
-    """Initialize ChromaDB connection"""
-    try:
-        app_state.chroma_client = chromadb.PersistentClient(path="chroma_db")
-        app_state.chroma_collection = app_state.chroma_client.get_collection("agri_waste_knowledge")
-        logger.info(f"ChromaDB initialized - collection has {app_state.chroma_collection.count()} documents")
-    except Exception as e:
-        logger.error(f"Failed to initialize ChromaDB: {e}")
-        # Create empty collection as fallback
-        try:
-            app_state.chroma_collection = app_state.chroma_client.create_collection("agri_waste_knowledge")
-            logger.warning("Created empty ChromaDB collection - run ingest.py first")
-        except:
-            logger.error("Could not create ChromaDB collection")
+CHROMA_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
 
 def initialize_ml_models():
-    """Initialize ML models for embeddings"""
+    """Initialize the shared embedding function (same one ingest.py uses)."""
     try:
-        app_state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("Sentence transformer model loaded")
+        app_state.embedding_model = get_embedding_function()
+        logger.info("Shared embedding function loaded")
     except Exception as e:
-        logger.error(f"Failed to load sentence transformer: {e}")
+        logger.error(f"Failed to load embedding function: {e}")
+
+def initialize_chroma():
+    """Initialize ChromaDB connection.
+
+    Must run AFTER initialize_ml_models(): the collection is bound to the same
+    embedding_function used at ingest time (see embedding.py) so query-time
+    embeddings land in the same vector space as the documents (A1 fix). Without
+    this, Chroma silently falls back to its own default embedder for queries.
+    """
+    try:
+        app_state.chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    except Exception as e:
+        logger.error(f"Failed to create ChromaDB client: {e}")
+        return
+
+    try:
+        app_state.chroma_collection = app_state.chroma_client.get_collection(
+            "agri_waste_knowledge", embedding_function=app_state.embedding_model
+        )
+        logger.info(f"ChromaDB initialized - collection has {app_state.chroma_collection.count()} documents")
+    except Exception as e:
+        logger.warning(f"Existing collection not found ({e}); creating an empty one")
+        # Create empty collection as fallback - client is guaranteed to exist here
+        try:
+            app_state.chroma_collection = app_state.chroma_client.create_collection(
+                "agri_waste_knowledge", embedding_function=app_state.embedding_model
+            )
+            logger.warning("Created empty ChromaDB collection - run ingest.py first")
+        except Exception as create_err:
+            logger.error(f"Could not create ChromaDB collection: {create_err}")
 
 def load_quantification_models():
     """Load quantification models from JSON file"""
@@ -221,15 +238,15 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Firebase initialization failed: {e}")
     
     try:
-        initialize_chroma()
-    except Exception as e:
-        logger.warning(f"ChromaDB initialization failed: {e}")
-    
-    try:
         initialize_ml_models()
     except Exception as e:
         logger.warning(f"ML models initialization failed: {e}")
-    
+
+    try:
+        initialize_chroma()
+    except Exception as e:
+        logger.warning(f"ChromaDB initialization failed: {e}")
+
     try:
         success = load_quantification_models()
         if not success:

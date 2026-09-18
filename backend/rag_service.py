@@ -25,10 +25,13 @@ class RAGService:
         # Initialize Gemini
         api_key = gemini_api_key or os.getenv('GEMINI_API_KEY')
         if api_key:
+            # Default must match .env.template (GEMINI_MODEL) - a nonexistent model
+            # name here fails silently at generate_content() time instead of at
+            # startup, surfacing only as a generic "error generating opportunities".
+            model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                model_name = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
                 self.model = genai.GenerativeModel(model_name)
                 self.genai = genai
                 logger.info(f"Gemini API initialized successfully (model: {model_name})")
@@ -36,6 +39,12 @@ class RAGService:
                 self.model = None
                 self.genai = None
                 logger.warning("google-generativeai not installed - LLM generation disabled")
+            except Exception as e:
+                # Catches invalid model names / bad configuration at startup instead
+                # of on the first user request.
+                self.model = None
+                self.genai = None
+                logger.error(f"Failed to initialize Gemini model '{model_name}': {e}")
         else:
             self.model = None
             self.genai = None

@@ -9,15 +9,37 @@ class ResponseSynthesizer:
     def __init__(self, gemini_model: Any = None) -> None:
         self.gemini_model = gemini_model
 
+    # Unit -> multiplier to convert a price expressed "per <unit>" into a price per kg.
+    _UNIT_TO_PER_KG = {
+        "kg": 1.0, "kilo": 1.0, "kilos": 1.0, "kilogram": 1.0, "kilograms": 1.0,
+        "ton": 1.0 / 1000.0, "tons": 1.0 / 1000.0, "tonne": 1.0 / 1000.0, "tonnes": 1.0 / 1000.0,
+        "quintal": 1.0 / 100.0, "quintals": 1.0 / 100.0, "q": 1.0 / 100.0,
+    }
+
     def _extract_price_value(self, price_str: str) -> Optional[float]:
         """
-        Helper to parse price float from strings like '₹9.4/kg', '9.4', '12 per kg'.
+        Parse a price-per-kg float from LLM-extracted strings like '₹9.4/kg',
+        '₹2500/ton', '12 per quintal'.
+
+        C1 fix: the previous version grabbed the first number in the string with no
+        unit awareness, so '₹2500/ton' (₹2.50/kg) was read as ₹2500/kg - a 1000x
+        revenue error. A price with no recognizable per-unit is now rejected rather
+        than assumed to be per-kg.
         """
         try:
-            # Match digits and optionally a decimal point
-            match = re.search(r"(\d+(?:\.\d+)?)", price_str)
-            if match:
-                return float(match.group(1))
+            match = re.search(
+                r"(\d+(?:\.\d+)?)\s*(?:/|per)\s*(kg|kilo|kilos|kilogram|kilograms|"
+                r"ton|tons|tonne|tonnes|quintal|quintals|q)\b",
+                price_str,
+                re.IGNORECASE,
+            )
+            if not match:
+                logger.warning(f"Could not determine a per-unit price from '{price_str}' - ignoring it")
+                return None
+
+            value = float(match.group(1))
+            unit = match.group(2).lower()
+            return value * self._UNIT_TO_PER_KG[unit]
         except Exception:
             pass
         return None
@@ -78,6 +100,18 @@ class ResponseSynthesizer:
                     real_price = parsed_val
                     break
             
+            # C4: bound the scraped price against the curated model's implied price -
+            # an ungrounded LLM extraction should not be able to override the
+            # curated market_data.json numbers by an arbitrary factor.
+            if real_price is not None and calculations.get("estimated_revenue") and calculations["estimated_waste"] > 0:
+                curated_price_per_kg = calculations["estimated_revenue"] / calculations["estimated_waste"]
+                if curated_price_per_kg > 0 and not (0.2 <= real_price / curated_price_per_kg <= 5.0):
+                    logger.warning(
+                        f"Rejecting scraped price ₹{real_price}/kg - more than 5x off the curated "
+                        f"model price of ₹{curated_price_per_kg:.2f}/kg"
+                    )
+                    real_price = None
+
             if real_price is not None:
                 logger.info(f"Conflict Resolution: Replacing static price with web search price ₹{real_price}/kg")
                 # Recalculate revenue and ROI
