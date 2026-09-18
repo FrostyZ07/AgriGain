@@ -74,9 +74,19 @@ class ReactAgent:
             logger.warning("ReactAgent: no Gemini model available - cannot plan, forcing finish")
             return {"pending_calls": [], "model_content": None, "finish_reason": "no_model"}
 
+        # E2 fix: this call had no timeout at all - a single hung request could
+        # block a turn (and the request behind it, now that main.py's handlers
+        # run this synchronously in FastAPI's threadpool) indefinitely, with
+        # MAX_TURNS giving no protection against one call that never returns.
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
         try:
-            response = model.generate_content(chat_history)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(model.generate_content, chat_history)
+                response = future.result(timeout=30)
             candidate = response.candidates[0]
+        except FutureTimeoutError:
+            logger.error(f"ReactAgent: Gemini call timed out after 30s on turn {turn}")
+            return {"pending_calls": [], "model_content": None, "finish_reason": "model_error: timeout"}
         except Exception as e:
             logger.error(f"ReactAgent: Gemini call failed on turn {turn}: {e}")
             return {"pending_calls": [], "model_content": None, "finish_reason": f"model_error: {e}"}

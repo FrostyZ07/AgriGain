@@ -96,7 +96,11 @@ class WebSearchAgent(BaseAgent):
                     
                     Return ONLY the raw JSON object, no markdown blocks, no explanations:"""
 
-                    response = self.gemini_model.generate_content(prompt)
+                    # E2 fix: this call had no timeout at all.
+                    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(self.gemini_model.generate_content, prompt)
+                        response = future.result(timeout=15)
                     response_text = response.text.strip()
                     
                     # Clean markdown code blocks if any

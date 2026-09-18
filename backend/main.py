@@ -472,7 +472,7 @@ async def health_check(state: AppState = Depends(get_app_state)):
     return health_status
 
 @app.post("/log_waste", response_model=LogWasteResponse)
-async def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_state)):
+def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_state)):
     """
     Log agricultural waste and calculate estimated weight in kilograms.
     
@@ -720,7 +720,7 @@ Return only the JSON object:"""
         return None
 
 @app.post("/get_opportunities", response_model=GetOpportunitiesResponse)
-async def get_opportunities(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def get_opportunities(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
     """
     Get AI-powered waste monetization opportunities using RAG.
     
@@ -857,7 +857,7 @@ class TestOpportunitiesRequest(BaseModel):
     region: str = Field("all", description="Geographic region")
 
 @app.post("/test_opportunities", response_model=GetOpportunitiesResponse)
-async def test_opportunities(request: TestOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def test_opportunities(request: TestOpportunitiesRequest, state: AppState = Depends(get_app_state)):
     """
     Test endpoint for RAG opportunities without Firestore dependency.
     Useful for testing the RAG pipeline directly.
@@ -910,7 +910,7 @@ async def test_opportunities(request: TestOpportunitiesRequest, state: AppState 
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/ai_insight", response_model=AIInsightResponse)
-async def get_ai_insight(request: AIInsightRequest, state: AppState = Depends(get_app_state)):
+def get_ai_insight(request: AIInsightRequest, state: AppState = Depends(get_app_state)):
     """
     Get AI-powered insights about agricultural waste questions.
     
@@ -1025,17 +1025,23 @@ Knowledge Base Context:
 Provide a clear, practical answer in {language_name}. If the context doesn't contain enough information to answer the question, state that clearly and suggest what type of information would be needed."""
                         
                         try:
-                            response = state.rag_service.model.generate_content(
-                                knowledge_prompt,
-                                generation_config=state.rag_service.genai.types.GenerationConfig(
-                                    temperature=0.4,
-                                    max_output_tokens=1000
+                            # E2 fix: no timeout on this call.
+                            with ThreadPoolExecutor(max_workers=1) as executor:
+                                future = executor.submit(
+                                    state.rag_service.model.generate_content,
+                                    knowledge_prompt,
+                                    generation_config=state.rag_service.genai.types.GenerationConfig(
+                                        temperature=0.4,
+                                        max_output_tokens=1000
+                                    )
                                 )
-                            )
-                            
+                                response = future.result(timeout=20)
+
                             if response.text:
                                 knowledge_base_answer = response.text.strip()
-                                
+
+                        except FutureTimeoutError:
+                            logger.warning("Knowledge-based answer generation timed out after 20s")
                         except Exception as e:
                             logger.warning(f"Failed to generate knowledge-based answer: {e}")
                 
@@ -1067,18 +1073,28 @@ Provide specific, practical advice for farmers. Include:
 Keep the answer concise but comprehensive, suitable for farmers with varying education levels."""
                 
                 try:
-                    response = state.rag_service.model.generate_content(
-                        fallback_prompt,
-                        generation_config=state.rag_service.genai.types.GenerationConfig(
-                            temperature=0.5,
-                            max_output_tokens=1200
+                    # E2 fix: no timeout on this call.
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(
+                            state.rag_service.model.generate_content,
+                            fallback_prompt,
+                            generation_config=state.rag_service.genai.types.GenerationConfig(
+                                temperature=0.5,
+                                max_output_tokens=1200
+                            )
                         )
-                    )
-                    
+                        response = future.result(timeout=20)
+
                     if response.text:
                         final_answer = response.text.strip()
                         confidence_score = 0.7  # Lower confidence for fallback answers
-                        
+
+                except FutureTimeoutError:
+                    logger.error("Gemini fallback timed out after 20s")
+                    final_answer = "I apologize, but I'm unable to process your question at the moment due to a technical issue. Please try again later or contact support for assistance."
+                    if request.language.lower() != "english":
+                        final_answer += f"\n\nकृपया बाद में पुनः प्रयास करें या सहायता के लिए संपर्क करें।"
+                    confidence_score = 0.0
                 except Exception as e:
                     logger.error(f"Gemini fallback failed: {e}")
                     final_answer = f"I apologize, but I'm unable to process your question at the moment due to a technical issue. Please try again later or contact support for assistance."
@@ -1146,7 +1162,7 @@ def categorize_recommendations(recs: list) -> dict:
     }
 
 @app.post("/api/v2/recommend")
-async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
     """
     Unified endpoint that coordinates the Master ReAct Orchestrator.
     It fetches waste details from Firestore, constructs a query,
@@ -1256,7 +1272,7 @@ async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(
 
 
 @app.post("/investigations", response_model=StartInvestigationResponse)
-async def start_investigation(request: StartInvestigationRequest, state: AppState = Depends(get_app_state)):
+def start_investigation(request: StartInvestigationRequest, state: AppState = Depends(get_app_state)):
     """
     Translates raw user chat prompts into a series of progressive WorkspaceEvents
     for the agentic timeline visualization dashboard.

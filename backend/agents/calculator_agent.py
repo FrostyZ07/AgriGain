@@ -8,21 +8,51 @@ from quantify import get_quantification_service
 
 logger = logging.getLogger(__name__)
 
-# Default crop yield mapping (kg of waste per acre)
-CROP_YIELD_MULTIPLIERS = {
-    "rice": 2000.0,
-    "sugarcane": 3000.0,
-    "vegetable": 1200.0,
-    "fruit": 800.0,
-    "default": 1000.0
-}
+# C3 fix: the transport/storage/yield/CO2 constants and crop yield multipliers
+# used to be bare literals here, presented in every response rounded to 2dp as
+# if measured. They're unsourced placeholders (see data/cost_models.json's
+# _note) - moving them to JSON makes that visible and makes them calibratable
+# per-region without a code change.
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+_DEFAULT_COST_MODELS_PATH = os.path.join(_DATA_DIR, "cost_models.json")
+_DEFAULT_MARKET_DATA_PATH = os.path.join(_DATA_DIR, "market_data.json")
+
+
+def _load_cost_models(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load cost models from {path}: {e} - using hardcoded fallback constants.")
+        return {
+            "transportation_cost_per_kg": {"value": 0.8},
+            "storage_cost_per_kg": {"value": 0.45},
+            "biochar_yield_fraction": {"value": 0.33},
+            "biogas_yield_fraction": {"value": 0.25},
+            "co2_saved_per_kg": {"value": 0.45},
+            "crop_yield_multipliers_kg_per_acre": {
+                "rice": {"value": 2000.0}, "sugarcane": {"value": 3000.0},
+                "vegetable": {"value": 1200.0}, "fruit": {"value": 800.0},
+                "default": {"value": 1000.0},
+            },
+        }
+
 
 class CalculatorAgent(BaseAgent):
-    def __init__(self, market_data_path: str = "data/market_data.json") -> None:
+    def __init__(self, market_data_path: str = _DEFAULT_MARKET_DATA_PATH, cost_models_path: str = _DEFAULT_COST_MODELS_PATH) -> None:
         super().__init__()
         self.market_data_path = market_data_path
         self.quantification_service = get_quantification_service()
         self.market_prices: Dict[str, float] = {}
+        self.cost_models = _load_cost_models(cost_models_path)
+
+    def _cost(self, key: str) -> float:
+        return self.cost_models[key]["value"]
+
+    def _crop_yield_multiplier(self, crop: str) -> float:
+        multipliers = self.cost_models["crop_yield_multipliers_kg_per_acre"]
+        entry = multipliers.get(crop, multipliers["default"])
+        return entry["value"]
 
     def initialize(self) -> None:
         """Load market prices from json file to calculate revenue."""
@@ -30,7 +60,7 @@ class CalculatorAgent(BaseAgent):
             if os.path.exists(self.market_data_path):
                 with open(self.market_data_path, "r", encoding="utf-8") as f:
                     market_data = json.load(f)
-                
+
                 # Compute average price per waste type
                 temp_prices: Dict[str, list] = {}
                 for entry in market_data:
@@ -40,7 +70,7 @@ class CalculatorAgent(BaseAgent):
                         if wtype not in temp_prices:
                             temp_prices[wtype] = []
                         temp_prices[wtype].append(price)
-                
+
                 self.market_prices = {
                     wtype: sum(prices) / len(prices)
                     for wtype, prices in temp_prices.items()
@@ -111,39 +141,41 @@ class CalculatorAgent(BaseAgent):
                 elif unit_clean in ["quintal", "quintals", "q"]:
                     estimated_waste_kg = qty * 100.0
                 else:
-                    try:
-                        estimated_waste_kg = self.quantification_service.calculate_kg(
-                            waste_type=waste_type,
-                            unit_name=unit,
-                            quantity=int(qty)
-                        )
-                    except Exception as exc:
-                        logger.warning(f"QuantificationService failed: {exc}. Using fallback of 50kg per unit.")
-                        estimated_waste_kg = qty * 50.0
+                    # C2 fix: an unknown waste_type/unit combination used to
+                    # silently fall back to a fabricated 50kg-per-unit conversion
+                    # ("3 truckloads" -> 150 kg, asserted as if measured). Let the
+                    # error propagate - execute()'s except block turns it into an
+                    # honest "failed" ToolResponse instead of a wrong number.
+                    estimated_waste_kg = self.quantification_service.calculate_kg(
+                        waste_type=waste_type,
+                        unit_name=unit,
+                        quantity=int(qty)
+                    )
             else:
                 # Estimate from acreage
                 area = float(inp.get("area", 0))
                 crop = inp.get("crop", "").strip().lower()
-                multiplier = CROP_YIELD_MULTIPLIERS.get(crop, CROP_YIELD_MULTIPLIERS["default"])
+                multiplier = self._crop_yield_multiplier(crop)
                 estimated_waste_kg = area * multiplier
 
             # 2. Lookup avg price per kg
             clean_wtype = waste_type.strip().lower().replace(" ", "_")
             avg_price = self.market_prices.get(clean_wtype, 5.0)  # default fallback is ₹5.0/kg
 
-            # 3. Calculations
+            # 3. Calculations - see data/cost_models.json for these constants
+            # and their (unsourced-placeholder) provenance (C3 fix).
             estimated_revenue = estimated_waste_kg * avg_price
-            transportation_cost = estimated_waste_kg * 0.8  # ₹0.8 per kg
-            storage_cost = estimated_waste_kg * 0.45       # ₹0.45 per kg
+            transportation_cost = estimated_waste_kg * self._cost("transportation_cost_per_kg")
+            storage_cost = estimated_waste_kg * self._cost("storage_cost_per_kg")
             total_cost = transportation_cost + storage_cost
 
             roi = 0.0
             if total_cost > 0:
                 roi = (estimated_revenue - total_cost) / total_cost
 
-            biochar_yield = estimated_waste_kg * 0.33        # 33% yield
-            biogas_estimate = estimated_waste_kg * 0.25      # 25% yield
-            co2_saved = estimated_waste_kg * 0.45            # 0.45 kg saved per kg
+            biochar_yield = estimated_waste_kg * self._cost("biochar_yield_fraction")
+            biogas_estimate = estimated_waste_kg * self._cost("biogas_yield_fraction")
+            co2_saved = estimated_waste_kg * self._cost("co2_saved_per_kg")
 
             result = {
                 "estimated_waste": round(estimated_waste_kg, 2),
