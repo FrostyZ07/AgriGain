@@ -132,6 +132,59 @@ class RAGEvaluator:
             'false_negatives': false_negatives
         }
     
+    # F1: the RAG prompt's own central safety rule is "NEVER invent buyers,
+    # companies, phone numbers, prices, technologies or revenue" - but nothing
+    # in this evaluator ever checked that. Category-keyword matching only tells
+    # you the response *mentions* the right topics, not whether any specific
+    # fact in it is actually grounded in the retrieved context.
+    _PRICE_PATTERN = re.compile(r"₹\s?[\d,]+(?:\.\d+)?(?:\s?/\s?\w+)?")
+    _PHONE_PATTERN = re.compile(r"(?:\+?91[\-\s]?)?\b\d{10}\b")
+    _NOT_AVAILABLE_PHRASES = {
+        "not available in the provided knowledge base.",
+        "buyer information not available in the provided knowledge base.",
+    }
+
+    def extract_specific_claims(self, response_text: str) -> List[str]:
+        """
+        Pull out the concrete, checkable facts a response asserts: prices, phone
+        numbers, and named buyers (from the prompt's own structured "Potential
+        Buyers: X, Y" field). These are exactly the categories the RAG system
+        prompt promises never to invent.
+        """
+        claims: List[str] = []
+        claims.extend(self._PRICE_PATTERN.findall(response_text))
+        claims.extend(self._PHONE_PATTERN.findall(response_text))
+
+        for match in re.finditer(r"Potential Buyers:\s*(.+)", response_text):
+            for name in match.group(1).split(","):
+                name = name.strip()
+                if name and name.lower() not in self._NOT_AVAILABLE_PHRASES:
+                    claims.append(name)
+
+        return claims
+
+    def check_groundedness(self, response_text: str, context: str) -> Dict[str, Any]:
+        """
+        For each specific claim in the response, check whether it appears
+        verbatim (case-insensitive) in the context that was actually retrieved.
+        A response with no checkable claims (e.g. every section correctly said
+        "not available") is vacuously grounded - it didn't invent anything.
+        """
+        claims = self.extract_specific_claims(response_text)
+        if not claims:
+            return {"groundedness_score": 1.0, "total_claims": 0, "grounded_claims": 0, "ungrounded_claims": []}
+
+        context_lower = context.lower()
+        ungrounded = [c for c in claims if re.sub(r"\s+", " ", c.strip()).lower() not in context_lower]
+        grounded_count = len(claims) - len(ungrounded)
+
+        return {
+            "groundedness_score": grounded_count / len(claims),
+            "total_claims": len(claims),
+            "grounded_claims": grounded_count,
+            "ungrounded_claims": ungrounded,
+        }
+
     def calculate_response_quality_metrics(self, response: Dict[str, Any], query: Dict[str, Any]) -> Dict[str, Any]:
         """Calculate various quality metrics for the RAG response"""
         opportunities_text = response.get('opportunities_text', '')
@@ -159,7 +212,11 @@ class RAGEvaluator:
         # Category extraction
         found_categories = self.extract_categories_from_response(opportunities_text)
         category_accuracy = self.calculate_category_accuracy(query['expected_categories'], found_categories)
-        
+
+        # F1: groundedness - the metric that actually matters for this system's
+        # core safety promise. Category accuracy only checks topic coverage.
+        groundedness = self.check_groundedness(opportunities_text, response.get('context', ''))
+
         return {
             'response_length': response_length,
             'word_count': word_count,
@@ -169,6 +226,7 @@ class RAGEvaluator:
             'safety_mentioned': safety_mentioned,
             'found_categories': list(found_categories),
             'category_accuracy': category_accuracy,
+            'groundedness': groundedness,
             'sources_used': response.get('sources_used', 0),
             'processing_time_ms': response.get('processing_time_ms', 0),
             'context_length': response.get('context_length', 0)
@@ -208,6 +266,13 @@ class RAGEvaluator:
             logger.info(f"  ✓ Sources used: {quality_metrics['sources_used']}")
             logger.info(f"  ✓ Context Length: {quality_metrics['context_length']} chars")
             logger.info(f"  ✓ Response Length: {quality_metrics['response_length']} chars")
+            groundedness = quality_metrics['groundedness']
+            logger.info(
+                f"  ✓ Groundedness: {groundedness['groundedness_score']:.2f} "
+                f"({groundedness['grounded_claims']}/{groundedness['total_claims']} claims grounded)"
+            )
+            if groundedness['ungrounded_claims']:
+                logger.warning(f"  ⚠ UNGROUNDED CLAIMS (not in retrieved context): {groundedness['ungrounded_claims']}")
 
             logger.info("----- Gemini Response -----")
             logger.info(response['opportunities_text'])
@@ -263,6 +328,12 @@ class RAGEvaluator:
         actionable_scores = [r['quality_metrics']['actionable_score'] for r in successful_evaluations]
         processing_times = [r['quality_metrics']['processing_time_ms'] for r in successful_evaluations]
         sources_used = [r['quality_metrics']['sources_used'] for r in successful_evaluations]
+        groundedness_scores = [r['quality_metrics']['groundedness']['groundedness_score'] for r in successful_evaluations]
+        all_ungrounded_claims = [
+            {'test_id': r['test_id'], 'claims': r['quality_metrics']['groundedness']['ungrounded_claims']}
+            for r in successful_evaluations
+            if r['quality_metrics']['groundedness']['ungrounded_claims']
+        ]
         
         # Waste type performance
         waste_type_performance = {}
@@ -300,8 +371,18 @@ class RAGEvaluator:
                                            if r['quality_metrics']['safety_mentioned']),
                 'waste_type_mention_rate': sum(1 for r in successful_evaluations 
                                              if r['quality_metrics']['waste_type_mentioned']) / len(successful_evaluations),
-                'region_mention_rate': sum(1 for r in successful_evaluations 
+                'region_mention_rate': sum(1 for r in successful_evaluations
                                          if r['quality_metrics']['region_mentioned']) / len(successful_evaluations)
+            },
+            # F1: the metric that matters most for this system's core safety
+            # promise ("NEVER invent buyers, companies, phone numbers, prices").
+            # A drop here across a prompt change is a regression worth blocking
+            # on, even if category coverage looks fine.
+            'groundedness_metrics': {
+                'avg_groundedness_score': statistics.mean(groundedness_scores),
+                'min_groundedness_score': min(groundedness_scores),
+                'responses_with_ungrounded_claims': len(all_ungrounded_claims),
+                'ungrounded_claims_by_test': all_ungrounded_claims
             },
             'performance_metrics': {
                 'avg_processing_time_ms': statistics.mean(processing_times),
@@ -471,7 +552,15 @@ def main():
     print(f"Waste Type Mentioned: {quality['waste_type_mention_rate']:.1%}")
     print(f"Region Mentioned: {quality['region_mention_rate']:.1%}")
     print(f"Safety Considerations: {quality['responses_with_safety']} responses")
-    
+
+    groundedness = summary['groundedness_metrics']
+    print(f"\n🔍 GROUNDEDNESS (never invent buyers/prices/phone numbers)")
+    print(f"Average Groundedness: {groundedness['avg_groundedness_score']:.3f}")
+    print(f"Minimum Groundedness: {groundedness['min_groundedness_score']:.3f}")
+    print(f"Responses with ungrounded claims: {groundedness['responses_with_ungrounded_claims']}")
+    for entry in groundedness['ungrounded_claims_by_test']:
+        print(f"  ⚠ Test {entry['test_id']}: {entry['claims']}")
+
     performance = summary['performance_metrics']
     print(f"\n⚡ PERFORMANCE")
     print(f"Avg Processing Time: {performance['avg_processing_time_ms']:.0f}ms")

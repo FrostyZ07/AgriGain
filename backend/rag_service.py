@@ -488,6 +488,7 @@ Generate recommendations following the exact output format.
                 "sources_used": len(retrieved_docs),
                 "processing_time_ms": processing_time,
                 "context_length": len(context),
+                "context": context,  # F1: lets evaluate_rag.py check groundedness against what was actually retrieved
                 "queries_generated": len(queries),
                 "retrieved_documents": [
                     {
