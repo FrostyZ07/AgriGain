@@ -21,13 +21,17 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 import logging
+import threading
+import time
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import firebase_admin
 from firebase_admin import credentials, firestore
-from fastapi import FastAPI, HTTPException, Depends
+from firebase_admin import auth as firebase_auth
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 import json
@@ -93,10 +97,6 @@ class GetOpportunitiesRequest(BaseModel):
     """Request model for getting waste monetization opportunities"""
     userId: str = Field(..., description="Unique identifier for the user")
     waste_log_id: str = Field(..., description="ID of the waste log to generate opportunities for")
-
-class OpportunityCategory(BaseModel):
-    """Model for a single opportunity category"""
-    opportunities: list[str] = Field(default_factory=list, description="List of opportunity descriptions")
 
 class StructuredOpportunities(BaseModel):
     """Structured opportunities organized by category"""
@@ -370,19 +370,93 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# D2 fix: allow_origins=["*"] with allow_credentials=True is an invalid CORS
+# combination that browsers reject outright. CORS_ORIGINS already existed in
+# .env.template, unused. Falls back to "*" (with credentials disabled, which
+# is the only way "*" is spec-legal) so the demo keeps working with no config.
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()] or ["*"]
+_cors_allow_credentials = _cors_origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# D5 fix: RATE_LIMIT_PER_MINUTE already existed in .env.template, unused. Each
+# request here can trigger several Gemini calls plus a Tavily search, so with
+# no limit at all a single client can run up real API cost. Simple per-IP
+# fixed-window counter, exempt from auth so it can't be starved by a broken
+# token; health/docs excluded so uptime monitoring never gets rate limited.
+# ponytail: single-process in-memory state behind a global lock - resets on
+# restart and doesn't share across workers. Move to a shared store (Redis)
+# if this runs with more than one worker process.
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+_rate_limit_lock = threading.Lock()
+_rate_limit_buckets: Dict[str, list] = {}
+_RATE_LIMIT_EXEMPT_PATHS = {"/health", "/", "/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if request.url.path in _RATE_LIMIT_EXEMPT_PATHS:
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window_start = now - 60.0
+    with _rate_limit_lock:
+        bucket = _rate_limit_buckets.setdefault(client_ip, [])
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if len(bucket) >= RATE_LIMIT_PER_MINUTE:
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Please slow down."})
+        bucket.append(now)
+
+    return await call_next(request)
 
 # Dependency to get database connections
 async def get_app_state() -> AppState:
     """Dependency to inject app state into endpoints"""
     return app_state
+
+# D1 fix: userId used to arrive in the request body and get used directly with
+# the Admin SDK to read/write artifacts/{appId}/users/{userId}/... - the Admin
+# SDK bypasses firestore.rules entirely (which carefully enforces
+# request.auth.uid == userId), so any caller could read or write any farmer's
+# data by guessing a uid.
+#
+# Gated behind AUTH_REQUIRED so the demo keeps running with no client changes;
+# set AUTH_REQUIRED=true before any real user data is involved. When enabled,
+# a valid Firebase ID token is required and its uid is the only thing trusted -
+# never the body.
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").strip().lower() == "true"
+
+
+def get_authenticated_uid(authorization: Optional[str] = Header(None)) -> Optional[str]:
+    """FastAPI dependency: verifies a Firebase ID token when AUTH_REQUIRED is on.
+    Returns None when auth is off (demo mode) or always the verified uid otherwise."""
+    if not AUTH_REQUIRED:
+        return None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization[len("Bearer "):]
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+        return decoded["uid"]
+    except Exception as e:
+        logger.warning(f"Token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def authorize_for_user(request_user_id: str, authenticated_uid: Optional[str]) -> None:
+    """Raise 403 if AUTH_REQUIRED is on and the token's uid doesn't match the
+    userId the request is acting on. No-op when auth is off."""
+    if AUTH_REQUIRED and authenticated_uid != request_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this user")
 
 # Basic health check endpoint
 @app.get("/")
@@ -399,15 +473,6 @@ async def root():
             "get_how_to_guide": "/get_how_to_guide/{guide_id}",
             "get_opportunities": "/get_opportunities"
         }
-    }
-
-@app.get("/debug/firestore")
-async def debug_firestore(state: AppState = Depends(get_app_state)):
-    """Debug endpoint to check Firestore state"""
-    return {
-        "firestore_db_is_none": state.firestore_db is None,
-        "firestore_db_type": str(type(state.firestore_db)),
-        "firestore_db_str": str(state.firestore_db)[:100] if state.firestore_db else "None"
     }
 
 @app.get("/health")
@@ -466,16 +531,36 @@ async def health_check(state: AppState = Depends(get_app_state)):
     except Exception as e:
         health_status["services"]["rag_service"] = f"error: {str(e)}"
         health_status["status"] = "degraded"
-    
+
+    # E4 fix: initialize_agent_registry() re-raises on failure at startup, after
+    # which every orchestrator call returns AGENT_NOT_FOUND - but /health had no
+    # way to reflect that; it would report "healthy" the whole time.
+    try:
+        from backend.registry.tool_registry import global_registry
+        agents = global_registry.list_agents()
+        expected = {"calculator", "rag", "web_search"}
+        if expected.issubset(set(agents)):
+            health_status["services"]["agent_registry"] = f"{len(agents)} agents registered: {sorted(agents)}"
+        else:
+            health_status["services"]["agent_registry"] = f"missing agents - only {sorted(agents)} registered"
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["services"]["agent_registry"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+
     health_status["timestamp"] = datetime.now(timezone.utc).isoformat()
     
     return health_status
 
 @app.post("/log_waste", response_model=LogWasteResponse)
-def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_state)):
+def log_waste(
+    request: LogWasteRequest,
+    state: AppState = Depends(get_app_state),
+    authenticated_uid: Optional[str] = Depends(get_authenticated_uid),
+):
     """
     Log agricultural waste and calculate estimated weight in kilograms.
-    
+
     This endpoint:
     1. Validates the waste type and unit combination
     2. Calculates total weight using quantification models
@@ -483,6 +568,8 @@ def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_state)
     4. Returns the log ID and estimated weight
     """
     try:
+        authorize_for_user(request.userId, authenticated_uid)
+
         # Validate inputs using quantification service
         if not state.quantification_models:
             raise HTTPException(status_code=503, detail="Quantification models not loaded")
@@ -542,7 +629,7 @@ def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_state)
         raise
     except Exception as e:
         logger.error(f"Error logging waste: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/get_how_to_guide/{guide_id}", response_model=HowToGuideResponse)
 async def get_how_to_guide(guide_id: str, state: AppState = Depends(get_app_state)):
@@ -592,7 +679,7 @@ async def get_how_to_guide(guide_id: str, state: AppState = Depends(get_app_stat
         raise
     except Exception as e:
         logger.error(f"Error retrieving guide {guide_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/guides")
 async def list_guides():
@@ -624,7 +711,7 @@ async def list_guides():
         
     except Exception as e:
         logger.error(f"Error listing guides: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/quantification/info")
 async def get_quantification_info(state: AppState = Depends(get_app_state)):
@@ -645,7 +732,7 @@ async def get_quantification_info(state: AppState = Depends(get_app_state)):
         
     except Exception as e:
         logger.error(f"Error getting quantification info: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 def structure_opportunities_text(opportunities_text: str, rag_service: RAGService) -> Optional[StructuredOpportunities]:
     """
@@ -720,19 +807,25 @@ Return only the JSON object:"""
         return None
 
 @app.post("/get_opportunities", response_model=GetOpportunitiesResponse)
-def get_opportunities(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def get_opportunities(
+    request: GetOpportunitiesRequest,
+    state: AppState = Depends(get_app_state),
+    authenticated_uid: Optional[str] = Depends(get_authenticated_uid),
+):
     """
     Get AI-powered waste monetization opportunities using RAG.
-    
+
     This endpoint implements the main RAG functionality:
     1. Fetches the waste log from Firestore using waste_log_id
-    2. Fetches the user's profile to get their region  
+    2. Fetches the user's profile to get their region
     3. Calls RAG service to generate grounded opportunities
     4. Optionally structures the response into JSON categories
-    
+
     As specified in devplan Phase 3.2 and 3.3.
     """
     try:
+        authorize_for_user(request.userId, authenticated_uid)
+
         # Check if RAG service is available
         if not state.rag_service:
             raise HTTPException(status_code=503, detail="RAG service not available")
@@ -829,7 +922,7 @@ def get_opportunities(request: GetOpportunitiesRequest, state: AppState = Depend
         raise
     except Exception as e:
         logger.error(f"Error generating opportunities: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 class AIInsightRequest(BaseModel):
     """Request model for AI insights about agricultural waste"""
@@ -861,7 +954,13 @@ def test_opportunities(request: TestOpportunitiesRequest, state: AppState = Depe
     """
     Test endpoint for RAG opportunities without Firestore dependency.
     Useful for testing the RAG pipeline directly.
+
+    D3: disabled once AUTH_REQUIRED is on (i.e. once this is treated as a real
+    deployment) - it's a debug convenience with no user-scoping, not something
+    that should stay reachable in production.
     """
+    if AUTH_REQUIRED:
+        raise HTTPException(status_code=404, detail="Not found")
     try:
         # Check if RAG service is available
         if not state.rag_service:
@@ -907,7 +1006,7 @@ def test_opportunities(request: TestOpportunitiesRequest, state: AppState = Depe
         raise
     except Exception as e:
         logger.error(f"Error generating test opportunities: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/ai_insight", response_model=AIInsightResponse)
 def get_ai_insight(request: AIInsightRequest, state: AppState = Depends(get_app_state)):
@@ -1162,13 +1261,19 @@ def categorize_recommendations(recs: list) -> dict:
     }
 
 @app.post("/api/v2/recommend")
-def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def recommend(
+    request: GetOpportunitiesRequest,
+    state: AppState = Depends(get_app_state),
+    authenticated_uid: Optional[str] = Depends(get_authenticated_uid),
+):
     """
-    Unified endpoint that coordinates the Master ReAct Orchestrator.
+    Unified endpoint that coordinates the ReAct Orchestrator.
     It fetches waste details from Firestore, constructs a query,
-    executes the multi-agent graph, and returns the synthesized JSON response.
+    executes the agent loop, and returns the synthesized JSON response.
     """
     try:
+        authorize_for_user(request.userId, authenticated_uid)
+
         # Check database connections
         if not state.firestore_db:
             try:
@@ -1268,7 +1373,7 @@ def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(get_ap
         raise
     except Exception as e:
         logger.error(f"Error executing recommendation orchestrator: {e}")
-        raise HTTPException(status_code=500, detail=f"Recommendation error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Recommendation error")
 
 
 @app.post("/investigations", response_model=StartInvestigationResponse)

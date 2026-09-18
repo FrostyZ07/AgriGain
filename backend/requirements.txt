@@ -32,19 +32,13 @@ flake8>=6.0.0
 
 # Production deployment
 gunicorn>=21.2.0
-google-cloud-storage>=2.10.0
 
-# Additional ML dependencies for Cloud Run
+# Additional ML dependencies (transitive deps of sentence-transformers)
 numpy>=1.24.0
-scipy>=1.11.0
-scikit-learn>=1.3.0
 torch>=2.0.0
 transformers>=4.33.0
 
 # Agentic AI dependencies
 langgraph>=0.1.0
 tavily-python>=0.3.0
-langchain-core>=0.1.0
-langchain-google-genai>=0.0.1
-langchain-community>=0.0.1
 
