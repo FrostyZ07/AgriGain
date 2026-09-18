@@ -14,16 +14,14 @@ class RAGAgent(BaseAgent):
 
     def initialize(self) -> None:
         """
-        Verify that RAG service is initialized. If not, try to import from main.
+        No-op: rag_service is injected at construction time by main.py's
+        initialize_agent_registry(). (E5: this used to re-import `from main import
+        app_state` as a fallback, which never actually triggered since main.py
+        always passes rag_service in - it just added a needless circular-import
+        risk between the FastAPI app module and the agent layer.)
         """
         if not self.rag_service:
-            try:
-                from main import app_state
-                if app_state.rag_service:
-                    self.rag_service = app_state.rag_service
-                    logger.info("RAGAgent successfully bound to global rag_service.")
-            except Exception as e:
-                logger.warning(f"RAGAgent: Could not load global rag_service on init: {e}")
+            logger.warning("RAGAgent initialized without a rag_service - RAG calls will fail.")
 
     def validate(self, request: ToolRequest) -> bool:
         inp = request.input
@@ -52,7 +50,13 @@ class RAGAgent(BaseAgent):
 
             # Option A: waste_type, total_kg, region structured lookup
             if "waste_type" in inp:
-                waste_type = inp.get("waste_type")
+                # Normalize "rice straw" -> "rice_straw": the LLM caller writes
+                # waste_type in natural language, but the knowledge base's
+                # waste_type metadata (and CalculatorAgent's own lookup) use
+                # underscores. Without this, retrieval silently finds zero
+                # waste-type-specific matches for anything the model didn't
+                # happen to phrase with underscores.
+                waste_type = (inp.get("waste_type") or "").strip().lower().replace(" ", "_")
                 total_kg = float(inp.get("total_kg") or inp.get("quantity") or 100.0)
                 region = inp.get("region") or inp.get("user_region") or "all"
                 

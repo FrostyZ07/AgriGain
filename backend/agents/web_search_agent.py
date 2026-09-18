@@ -20,19 +20,16 @@ class WebSearchAgent(BaseAgent):
 
     def initialize(self) -> None:
         """
-        Lazy-initialize TavilyService and fetch Gemini model if not bound.
+        Lazy-initialize TavilyService. gemini_model is injected at construction
+        time by main.py's initialize_agent_registry() (E5: this used to re-import
+        `from main import app_state` as a fallback, which never actually triggered
+        since main.py always passes gemini_model in).
         """
         if not self.tavily_service:
             self.tavily_service = TavilyService()
-        
+
         if not self.gemini_model:
-            try:
-                from main import app_state
-                if app_state.rag_service and app_state.rag_service.model:
-                    self.gemini_model = app_state.rag_service.model
-                    logger.info("WebSearchAgent successfully bound to global Gemini model.")
-            except Exception as e:
-                logger.warning(f"WebSearchAgent: Could not load global Gemini model on init: {e}")
+            logger.warning("WebSearchAgent initialized without a gemini_model - result structuring will be skipped.")
 
     def validate(self, request: ToolRequest) -> bool:
         inp = request.input

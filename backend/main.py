@@ -275,21 +275,49 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Agricultural Waste Management API...")
 
 def initialize_agent_registry():
-    """Initialize and register agents with the global registry."""
+    """
+    Initialize and register agents with the global registry.
+
+    Each agent's `parameters`/`required` here IS the schema the ReAct agent's
+    Gemini function-calling sees (ToolRegistry.to_function_declarations) - this
+    replaces the old hand-written JSON schema in orchestrator/prompts.py that had
+    drifted from what these agents actually read (e.g. 'region' was declared
+    nowhere; the calculator's crop/area path wasn't declared at all).
+
+    `timeout_seconds` is enforced per agent in orchestrator/executor.py. calculator
+    is pure local arithmetic; rag and web_search each make a network + LLM call and
+    need real headroom - RAGService's own internal Gemini call timeout is 45s, so
+    the agent-level timeout here must exceed that or a slow-but-successful RAG call
+    gets discarded as a timeout for no reason.
+    """
     try:
         from backend.agents.calculator_agent import CalculatorAgent
         from backend.agents.rag_agent import RAGAgent
         from backend.agents.web_search_agent import WebSearchAgent
         from backend.registry.tool_registry import global_registry
-        from backend.models.tool_models import AgentMetadata
+        from backend.models.tool_models import AgentMetadata, ToolParameter
 
         calc = CalculatorAgent()
         calc.initialize()
         global_registry.register(calc, AgentMetadata(
             name="calculator",
             version="1.0",
-            description="Performs deterministic calculations",
-            supported_intents=["waste_estimation", "roi_analysis"]
+            description=(
+                "Deterministic agricultural calculations: waste weight from quantity/unit "
+                "or crop/area, revenue, transport/storage cost, ROI, biochar/biogas yield, "
+                "CO2 savings."
+            ),
+            supported_intents=["waste_estimation", "roi_analysis"],
+            timeout_seconds=5,
+            parameters={
+                "waste_type": ToolParameter(type="string", description="e.g. rice_straw, rice_husks, sugarcane_bagasse"),
+                "quantity": ToolParameter(type="number", description="Numeric amount, if using a unit-based estimate"),
+                "unit": ToolParameter(type="string", description="Unit of quantity, e.g. kg, tons, sacks, quintals"),
+                "crop": ToolParameter(type="string", description="Crop name, if using an acreage-based estimate instead"),
+                "area": ToolParameter(type="number", description="Area in acres, if using an acreage-based estimate"),
+                "region": ToolParameter(type="string", description="Region or state, for region-specific pricing"),
+            },
+            required=["waste_type"],
         ))
 
         rag = RAGAgent(rag_service=app_state.rag_service)
@@ -297,8 +325,19 @@ def initialize_agent_registry():
         global_registry.register(rag, AgentMetadata(
             name="rag",
             version="1.0",
-            description="Retrieves domain knowledge",
-            supported_intents=["knowledge_retrieval"]
+            description=(
+                "Retrieves domain knowledge from the knowledge base: composting/processing "
+                "methods, buyers, safety guidelines, and grounded monetization opportunities "
+                "for a specific waste type."
+            ),
+            supported_intents=["knowledge_retrieval"],
+            timeout_seconds=50,
+            parameters={
+                "waste_type": ToolParameter(type="string", description="e.g. rice_straw, rice_husks, sugarcane_bagasse"),
+                "total_kg": ToolParameter(type="number", description="Total kg of waste, if known (from a prior calculator call)"),
+                "region": ToolParameter(type="string", description="Region or state"),
+            },
+            required=[],
         ))
 
         web_search = WebSearchAgent(gemini_model=app_state.rag_service.model if app_state.rag_service else None)
@@ -306,8 +345,14 @@ def initialize_agent_registry():
         global_registry.register(web_search, AgentMetadata(
             name="web_search",
             version="1.0",
-            description="Performs real-time web search",
-            supported_intents=["market_intelligence"]
+            description="Real-time market prices and local buyers via web search.",
+            supported_intents=["market_intelligence"],
+            timeout_seconds=30,
+            parameters={
+                "waste_type": ToolParameter(type="string", description="e.g. rice_straw, rice_husks, sugarcane_bagasse"),
+                "region": ToolParameter(type="string", description="Region or state"),
+            },
+            required=[],
         ))
         logger.info("All Multi-Agent layers initialized successfully.")
     except Exception as e:
@@ -1150,7 +1195,8 @@ async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(
 
         # 4. Execute Orchestrator
         from orchestrator.graph import run_orchestrator
-        orchestration_result = run_orchestrator(query, request_id=request.waste_log_id)
+        gemini_model = state.rag_service.model if state.rag_service else None
+        orchestration_result = run_orchestrator(query, request_id=request.waste_log_id, gemini_model=gemini_model)
 
         # Enrich response with waste_info and region for compatibility/logging
         if "waste_info" not in orchestration_result:
@@ -1213,40 +1259,40 @@ async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(
 async def start_investigation(request: StartInvestigationRequest, state: AppState = Depends(get_app_state)):
     """
     Translates raw user chat prompts into a series of progressive WorkspaceEvents
-    suitable for the agentic timeline visualization dashboard on the new frontend.
+    for the agentic timeline visualization dashboard.
+
+    B1 fix: this used to fabricate a fixed set of events - always the same three
+    recommendations (Biochar Production / Direct Sale to Factory / Aerobic
+    Composting) with hardcoded scores - regardless of what the orchestrator
+    actually did. It now walks the ReAct loop's real execution trace
+    (run_orchestrator_streaming) and builds one event per real turn/tool call, and
+    recommendation cards come from ResponseSynthesizer's evidence-grounded
+    generation (empty when there isn't enough evidence, rather than padded with
+    invented strategies).
     """
     import uuid
     import time
     session_id = f"sess_{uuid.uuid4().hex[:8]}"
     message = request.message
-    
-    # 1. Run the Orchestrator
-    from orchestrator.graph import run_orchestrator
-    try:
-        # Execute the LangGraph workflow on the query
-        res = run_orchestrator(message, request_id=session_id)
-    except Exception as e:
-        logger.error(f"Orchestrator failed during investigations endpoint: {e}")
-        # Revert to standard fallback events
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # 2. Extract results from orchestrator run
-    exec_meta = res.get("execution") or {}
-    tools_used = exec_meta.get("tools_used", [])
-    
-    # Check if the query is out of scope (no tools selected, explicitly stated, or parsed as out_of_scope)
-    intent_primary = res.get("intent", {}).get("primary") if isinstance(res.get("intent"), dict) else ""
-    if not intent_primary and "intent" in res:
-        intent_primary = res["intent"]
-
-    is_out_of_scope = (
-        (len(tools_used) == 0) or 
-        ("no waste" in message.lower()) or 
-        (intent_primary == "out_of_scope")
-    )
 
     def get_time():
         return time.strftime("%H:%M:%S")
+
+    gemini_model = state.rag_service.model if state.rag_service else None
+    from orchestrator.graph import run_orchestrator_streaming
+    try:
+        res, trace = run_orchestrator_streaming(message, request_id=session_id, gemini_model=gemini_model)
+    except Exception as e:
+        logger.error(f"Orchestrator failed during investigations endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    exec_meta = res.get("execution") or {}
+    tools_used = exec_meta.get("tools_used", [])
+    # B5 fix: replaces the old "no waste" in message.lower() substring check with
+    # the ReAct agent's own decision (react_agent.py sets this when the model,
+    # on turn 1, made no tool calls at all).
+    finish_reason = res.get("finish_reason")
+    is_out_of_scope = finish_reason == "out_of_scope"
 
     if is_out_of_scope:
         events = [
@@ -1261,19 +1307,6 @@ async def start_investigation(request: StartInvestigationRequest, state: AppStat
                     "title": "Request analyzed",
                     "detail": "Agri-Gain could not identify any crop type, waste type, or quantity in the input.",
                     "type": "conversation"
-                }
-            },
-            {
-                "type": "phase",
-                "phase": "planning",
-                "objective": "Execution plan bypassed",
-                "activeQuestion": "Explain options for non-agricultural queries.",
-                "timeline": {
-                    "id": f"t-plan-{uuid.uuid4().hex[:4]}",
-                    "time": get_time(),
-                    "title": "Strategy bypassed",
-                    "detail": "All calculator, RAG, and search routes skipped - input is out of scope.",
-                    "type": "planner"
                 }
             },
             {
@@ -1313,23 +1346,16 @@ async def start_investigation(request: StartInvestigationRequest, state: AppStat
                 "activeQuestion": "Please specify the type of crop waste and quantity (e.g. 5 tonnes sugarcane bagasse) to generate options."
             }
         ]
-        return StartInvestigationResponse(
-            sessionId=session_id,
-            events=events
-        )
+        return StartInvestigationResponse(sessionId=session_id, events=events)
 
     calc_data = res.get("calculations") or {}
     rag_data = res.get("knowledge_base") or {}
     search_data = res.get("market_information") or {}
     confidence = res.get("confidence_score", 0.85)
+    system_errors = res.get("system_errors") or []
 
     events = []
 
-    # Helper for timestamp formatting
-    def get_time():
-        return time.strftime("%H:%M:%S")
-
-    # Event 1: Phase change to Understanding
     events.append({
         "type": "phase",
         "phase": "understanding",
@@ -1343,280 +1369,185 @@ async def start_investigation(request: StartInvestigationRequest, state: AppStat
             "type": "conversation"
         }
     })
-
-    # Event 2: Phase change to Planning
     events.append({
         "type": "phase",
         "phase": "planning",
-        "objective": "Design dynamic agent execution plan",
-        "activeQuestion": "Identifying which tools will improve the recommendation quality.",
+        "objective": "Run the ReAct planning loop",
+        "activeQuestion": "Deciding which tools to call, one turn at a time.",
         "timeline": {
             "id": f"t-plan-{uuid.uuid4().hex[:4]}",
             "time": get_time(),
-            "title": "Execution plan created",
-            "detail": f"Selected parallel routes: {', '.join(tools_used)}",
+            "title": "ReAct loop started",
+            "detail": f"Agent will call tools as needed, up to {res.get('turns', '?')} turns.",
             "type": "planner"
         }
     })
 
-    # Event 3: Mark modules/tools running & completed progress
-    # A. Calculator Agent
-    if "calculator" in tools_used:
-        events.append({
-            "type": "planner",
-            "decisionId": "waste-analysis",
-            "status": "running",
-            "reason": "Resolving acreage yield and transport/handling metrics."
-        })
+    # Walk the REAL execution trace - one event per turn/tool call the graph
+    # actually made, in the order it made them.
+    TOOL_DECISION_ID = {"calculator": "waste-analysis", "rag": "knowledge-research", "web_search": "market-intelligence"}
+    TOOL_MODULE_ID = {"calculator": "calculator", "rag": "knowledge", "web_search": "market"}
+    seen_decisions = set()
+
+    for node_name, partial in trace:
+        if node_name == "agent":
+            for call in (partial.get("pending_calls") or []):
+                tool = call.get("tool")
+                decision_id = TOOL_DECISION_ID.get(tool)
+                if not decision_id:
+                    continue
+                seen_decisions.add(decision_id)
+                events.append({
+                    "type": "planner",
+                    "decisionId": decision_id,
+                    "status": "running",
+                    "reason": f"Turn {partial.get('turn', '?')}: calling {tool}({call.get('args', {})})"
+                })
+        elif node_name in TOOL_MODULE_ID:
+            tool_result = (partial.get("tool_results") or {}).get(node_name) or {}
+            status = tool_result.get("status")
+            result = tool_result.get("result") or {}
+            error = (tool_result.get("error") or {}).get("message")
+            module_id = TOOL_MODULE_ID[node_name]
+
+            if status == "success":
+                if node_name == "calculator":
+                    finding = f"Waste resolved to {result.get('estimated_waste', 0)} kg. ROI {result.get('roi', 0)}x."
+                elif node_name == "rag":
+                    finding = f"Retrieved {len(result.get('sources', []))} knowledge base sources."
+                else:
+                    finding = f"Market data: {result.get('market_price') or 'no price resolved'}. Buyers: {len(result.get('buyers', []))}."
+                module_status, quality = "completed", "high"
+            else:
+                finding = f"{node_name} did not return usable results: {error or 'unknown error'}"
+                module_status, quality = "unavailable", "unavailable"
+
+            events.append({
+                "type": "module",
+                "moduleId": module_id,
+                "status": module_status,
+                "progress": 100,
+                "latestFinding": finding,
+                "timeline": {
+                    "id": f"t-{module_id}-{uuid.uuid4().hex[:4]}",
+                    "time": get_time(),
+                    "title": f"{node_name} finished",
+                    "detail": finding,
+                    "type": "evidence"
+                }
+            })
+            events.append({
+                "type": "evidence",
+                "evidence": {
+                    "id": f"ev-{module_id}-{uuid.uuid4().hex[:4]}",
+                    "title": f"{node_name} result",
+                    "category": {"calculator": "Waste Analysis", "rag": "Knowledge Base", "web_search": "Market Intelligence"}[node_name],
+                    "summary": finding,
+                    "quality": quality,
+                    "impact": len(result) if status == "success" else 0
+                }
+            })
+            decision_id = TOOL_DECISION_ID[node_name]
+            seen_decisions.add(decision_id)
+            events.append({
+                "type": "planner",
+                "decisionId": decision_id,
+                "status": "completed" if status == "success" else "unavailable",
+                "reason": finding
+            })
+
+    for tool, decision_id in TOOL_DECISION_ID.items():
+        if decision_id not in seen_decisions:
+            events.append({
+                "type": "planner",
+                "decisionId": decision_id,
+                "status": "skipped",
+                "reason": f"The agent did not need {tool} for this query."
+            })
+
+    recommendation_cards = res.get("recommendation_cards") or []
+
+    if recommendation_cards:
+        top_id = recommendation_cards[0].get("id", "")
         events.append({
             "type": "module",
-            "moduleId": "calculator",
+            "moduleId": "ranking",
             "status": "completed",
             "progress": 100,
-            "latestFinding": f"Dry waste resolved to {calc_data.get('estimated_waste', 0)} kg. Revenue potential ₹{calc_data.get('estimated_revenue', 0)}.",
+            "latestFinding": f"Ranked {len(recommendation_cards)} evidence-grounded strategy option(s).",
+        })
+        events.append({
+            "type": "recommendations",
+            "recommendations": recommendation_cards,
+            "selectedRecommendationId": top_id,
             "timeline": {
-                "id": f"t-calc-{uuid.uuid4().hex[:4]}",
+                "id": f"t-recs-{uuid.uuid4().hex[:4]}",
                 "time": get_time(),
-                "title": "Waste calculations finished",
-                "detail": f"Calculated {calc_data.get('estimated_waste', 0)} kg weight with ROI multiple {calc_data.get('roi', 0)}x.",
-                "type": "evidence"
+                "title": "Recommendations compiled",
+                "detail": f"{len(recommendation_cards)} strategy option(s) ranked from gathered evidence.",
+                "type": "recommendation"
             }
-        })
-        events.append({
-            "type": "evidence",
-            "evidence": {
-                "id": f"ev-calc-{uuid.uuid4().hex[:4]}",
-                "title": "Material & ROI Estimates Confirmed",
-                "category": "Waste Analysis",
-                "summary": f"Calculations suggest a net profit of ₹{int(calc_data.get('estimated_revenue', 0) - (calc_data.get('transportation_cost', 0) + calc_data.get('storage_cost', 0)))} with CO2 savings of {calc_data.get('co2_saved', 0)} kg.",
-                "quality": "high",
-                "impact": 24
-            }
-        })
-    else:
-        events.append({
-            "type": "planner",
-            "decisionId": "waste-analysis",
-            "status": "skipped",
-            "reason": "No calculations required for this user query."
         })
 
-    # B. RAG Agent
-    if "rag" in tools_used:
-        events.append({
-            "type": "planner",
-            "decisionId": "knowledge-research",
-            "status": "running",
-            "reason": "Searching ChromaDB for verified utilization steps."
-        })
-        events.append({
-            "type": "module",
-            "moduleId": "knowledge",
-            "status": "completed",
-            "progress": 100,
-            "latestFinding": f"Retrieved {len(rag_data.get('sources', []))} reference docs. Standard agricultural guides loaded.",
-            "opportunities_text": rag_data.get("opportunities_text", ""),
-            "timeline": {
-                "id": f"t-rag-{uuid.uuid4().hex[:4]}",
-                "time": get_time(),
-                "title": "Domain research finished",
-                "detail": f"Located suitable composting and pyrolyzer guidelines.",
-                "type": "evidence"
-            }
-        })
-        events.append({
-            "type": "evidence",
-            "evidence": {
-                "id": f"ev-rag-{uuid.uuid4().hex[:4]}",
-                "title": "Agronomic Knowledge Ingested",
-                "category": "Knowledge Base",
-                "summary": rag_data.get("recommendations", ["No guides loaded."])[0] if rag_data.get("recommendations") else "Waste pathways matched to standard guide specifications.",
-                "quality": "high",
-                "impact": 20
-            }
-        })
-    else:
-        events.append({
-            "type": "planner",
-            "decisionId": "knowledge-research",
-            "status": "skipped",
-            "reason": "Static domain knowledge not required."
-        })
+        signals = []
+        if "calculator" in tools_used:
+            signals.append({"label": "Waste & ROI calculations", "value": 100, "direction": "positive"})
+        if "web_search" in tools_used:
+            has_price = bool(search_data.get("market_price"))
+            signals.append({"label": "Live market data", "value": 95 if has_price else 30,
+                             "direction": "positive" if has_price else "limiting"})
+        if "rag" in tools_used:
+            rag_conf = int(rag_data.get("confidence", 0.85) * 100)
+            signals.append({"label": "Knowledge base retrieval", "value": rag_conf, "direction": "positive"})
+        for err in system_errors[:3]:
+            signals.append({"label": err[:60], "value": 0, "direction": "limiting"})
 
-    # C. Web Search Agent
-    if "web_search" in tools_used:
         events.append({
-            "type": "planner",
-            "decisionId": "market-intelligence",
-            "status": "running",
-            "reason": "Scraping Tavily search results for local buyers."
-        })
-        events.append({
-            "type": "module",
-            "moduleId": "market",
-            "status": "completed",
-            "progress": 100,
-            "latestFinding": f"Scraped market prices: {search_data.get('market_price') or 'No live price resolved'}.",
-            "timeline": {
-                "id": f"t-search-{uuid.uuid4().hex[:4]}",
-                "time": get_time(),
-                "title": "Market signals scraped",
-                "detail": f"Live buyers list compiled: {', '.join(search_data.get('buyers', [])) or 'No specific factory names found'}",
-                "type": "evidence"
-            }
-        })
-        events.append({
-            "type": "evidence",
-            "evidence": {
-                "id": f"ev-search-{uuid.uuid4().hex[:4]}",
-                "title": "Live Market Intelligence Favorable",
-                "category": "Market Intelligence",
-                "summary": f"Resolved prices: {str(search_data.get('market_price', {})) or 'Historical average ₹5/kg used.'}. Local buyers count: {len(search_data.get('buyers', []))}.",
-                "quality": "medium",
-                "impact": 32
-            }
-        })
-    else:
-        events.append({
-            "type": "planner",
-            "decisionId": "market-intelligence",
-            "status": "skipped",
-            "reason": "Live market lookup skipped."
-        })
-
-    # 4. Generate Recommendations list from tool results
-    recs_list = res.get("recommendations") or ["Processing agricultural waste for maximum circular efficiency."]
-    
-    def find_summary_for_alt(alt_id, recs):
-        alt_id_lower = alt_id.lower()
-        keywords = {
-            "biochar": ["biochar", "pyrolysis", "carbon", "charcoal"],
-            "direct-sale": ["sale", "sell", "buyer", "factory", "market"],
-            "compost": ["compost", "fertilizer", "soil", "organic"],
-            "biogas": ["biogas", "methane", "energy", "power"]
-        }.get(alt_id_lower, [alt_id_lower])
-        
-        for rec in recs:
-            rec_lower = rec.lower()
-            if any(kw in rec_lower for kw in keywords):
-                return rec
-        return None
-
-    est_waste = calc_data.get("estimated_waste", 100.0)
-    est_rev = calc_data.get("estimated_revenue", 500.0)
-    roi_val = calc_data.get("roi", 2.0)
-    trans = calc_data.get("transportation_cost", 80.0)
-    storage = calc_data.get("storage_cost", 45.0)
-    total_cost = trans + storage
-    net_profit = est_rev - total_cost
-
-    recs_events = [
-        {
-            "id": "biochar",
-            "title": "Biochar Production",
-            "rank": 1,
+            "type": "confidence",
+            "recommendationId": top_id,
             "confidence": int(confidence * 100),
-            "expectedProfit": int(net_profit),
-            "roi": float(roi_val),
-            "investment": int(total_cost),
-            "timeline": "2 weeks",
-            "difficulty": "Medium",
-            "sustainabilityScore": 91,
-            "summary": find_summary_for_alt("biochar", recs_list) or "Thermochemical conversion into biochar yields highest net profit and circular sustainability.",
-            "advantages": ["Highest ROI", "Carbon capture credit value", "Very strong soil amendment value"],
-            "limitations": ["Upfront kiln setup cost", "Requires moisture controls"],
-            "drivers": [
-                {"label": "Market demand", "value": 32},
-                {"label": "Investment Fit", "value": 24},
-                {"label": "Carbon credit", "value": 18}
-            ]
-        },
-        {
-            "id": "direct-sale",
-            "title": "Direct Sale to Factory",
-            "rank": 2,
-            "confidence": int(confidence * 100 - 10),
-            "expectedProfit": int(est_rev * 0.7),
-            "roi": float(max(1.0, roi_val * 0.7)),
-            "investment": int(trans),
-            "timeline": "3 days",
-            "difficulty": "Low",
-            "sustainabilityScore": 58,
-            "summary": find_summary_for_alt("direct-sale", recs_list) or "Direct bulk dispatch to nearby biofuel boilers or brick kilns. Quick cash but lower margins.",
-            "advantages": ["Fastest liquidation", "Zero processing setup", "Low technical skill requirement"],
-            "limitations": ["Lower unit margin", "Subject to localized spot buyer demands"],
-            "drivers": [
-                {"label": "Speed", "value": 35},
-                {"label": "Low investment", "value": 28},
-                {"label": "Demand fit", "value": 15}
-            ]
-        },
-        {
-            "id": "compost",
-            "title": "Aerobic Composting",
-            "rank": 3,
-            "confidence": int(confidence * 100 - 20),
-            "expectedProfit": int(est_rev * 0.5),
-            "roi": float(max(1.0, roi_val * 0.5)),
-            "investment": int(storage * 2),
-            "timeline": "5 weeks",
-            "difficulty": "Medium",
-            "sustainabilityScore": 82,
-            "summary": find_summary_for_alt("compost", recs_list) or "Blend with crop residue to produce rich manure. Best for long-term circular agriculture.",
-            "advantages": ["Improves soil health directly", "Low equipment requirements", "Zero chemical residue"],
-            "limitations": ["Takes 5+ weeks of decomposition", "Requires substantial storage space"],
-            "drivers": [
-                {"label": "Soil value", "value": 30},
-                {"label": "Storage requirement", "value": 22},
-                {"label": "Zero waste", "value": 18}
-            ]
-        }
-    ]
-
-    events.append({
-        "type": "recommendations",
-        "recommendations": recs_events,
-        "selectedRecommendationId": "biochar",
-        "timeline": {
-            "id": f"t-recs-{uuid.uuid4().hex[:4]}",
-            "time": get_time(),
-            "title": "Recommendation compiled",
-            "detail": f"Ranks resolved: Biochar ranks #1 based on profit/sustainability trade-offs.",
-            "type": "recommendation"
-        }
-    })
-
-    # Event 5: Confidence Signals
-    events.append({
-        "type": "confidence",
-        "recommendationId": "biochar",
-        "confidence": int(confidence * 100),
-        "signals": [
-            {"label": "Waste yield verified", "value": int(confidence * 100 * 0.3), "direction": "positive"},
-            {"label": "Market demand verified", "value": int(confidence * 100 * 0.35), "direction": "positive"},
-            {"label": "Transport cost estimated", "value": 12, "direction": "limiting"}
-        ],
-        "timeline": {
-            "id": f"t-conf-{uuid.uuid4().hex[:4]}",
-            "time": get_time(),
-            "title": "Confidence score verified",
-            "detail": f"Confidence set to {int(confidence * 100)}% based on resolved data points.",
-            "type": "confidence"
-        }
-    })
-
-    # Event 6: Phase Ready
-    events.append({
-        "type": "phase",
-        "phase": "ready",
-        "objective": "Recommendation finalized",
-        "activeQuestion": "Inspect the timeline drivers, view evidence metrics, or ask follow-up refinements."
-    })
+            "signals": signals,
+            "timeline": {
+                "id": f"t-conf-{uuid.uuid4().hex[:4]}",
+                "time": get_time(),
+                "title": "Confidence score computed",
+                "detail": f"Confidence set to {int(confidence * 100)}% from {len(tools_used)} tool result(s).",
+                "type": "confidence"
+            }
+        })
+        events.append({
+            "type": "phase",
+            "phase": "ready",
+            "objective": "Recommendation finalized",
+            "activeQuestion": "Inspect the timeline drivers, view evidence metrics, or ask follow-up refinements."
+        })
+    else:
+        # Evidence was gathered but nothing was strong enough to rank - honest
+        # about the gap instead of padding with invented strategies (B1).
+        events.append({
+            "type": "recommendations",
+            "recommendations": [],
+            "selectedRecommendationId": "",
+            "timeline": {
+                "id": f"t-recs-{uuid.uuid4().hex[:4]}",
+                "time": get_time(),
+                "title": "No recommendation could be confidently ranked",
+                "detail": "Evidence was gathered but was not sufficient to support a ranked strategy.",
+                "type": "recommendation"
+            }
+        })
+        events.append({
+            "type": "phase",
+            "phase": "ready",
+            "objective": "Evidence gathered, but inconclusive",
+            "activeQuestion": "Try adding more detail (exact quantity, region, or waste type) to get ranked recommendations."
+        })
 
     return StartInvestigationResponse(
         sessionId=session_id,
         events=events
     )
+
 
 if __name__ == "__main__":
     import uvicorn
