@@ -22,7 +22,7 @@ import logging
 from typing import List, Dict, Any
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
+from embedding import get_embedding_function
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -44,29 +44,32 @@ class AgriWasteKnowledgeIngester:
         self.collection = None
         
     def setup_embedding_model(self):
-        """Load the sentence transformer model for embeddings."""
-        logger.info("Loading sentence transformer model: all-MiniLM-L6-v2")
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("Model loaded successfully")
-    
+        """Load the shared embedding function (same one used at query time)."""
+        logger.info("Loading shared embedding function: all-MiniLM-L6-v2")
+        self.embedding_model = get_embedding_function()
+        logger.info("Embedding function loaded successfully")
+
     def setup_chromadb(self):
-        """Initialize ChromaDB client and collection."""
+        """Initialize ChromaDB client and collection, bound to the shared embedding function."""
         logger.info(f"Setting up ChromaDB at {self.db_path}")
-        
+
         # Create the database directory if it doesn't exist
         os.makedirs(self.db_path, exist_ok=True)
-        
+
         # Initialize ChromaDB client with persistent storage
         self.chroma_client = chromadb.PersistentClient(path=self.db_path)
-        
-        # Create or get collection
+
+        # Create or get collection - embedding_function must match the one used at query time (A1 fix)
         try:
-            self.collection = self.chroma_client.get_collection("agri_waste_knowledge")
+            self.collection = self.chroma_client.get_collection(
+                "agri_waste_knowledge", embedding_function=self.embedding_model
+            )
             logger.info("Found existing collection")
-        except:
+        except Exception:
             self.collection = self.chroma_client.create_collection(
                 name="agri_waste_knowledge",
-                metadata={"description": "Agricultural waste processing knowledge base"}
+                metadata={"description": "Agricultural waste processing knowledge base"},
+                embedding_function=self.embedding_model
             )
             logger.info("Created new collection")
     
@@ -152,12 +155,12 @@ class AgriWasteKnowledgeIngester:
         # Generate embeddings and add to collection
         if documents:
             logger.info(f"Generating embeddings for {len(documents)} guide chunks...")
-            embeddings = self.embedding_model.encode(documents).tolist()
-            
+            # Let the collection's bound embedding_function embed these documents,
+            # instead of encoding manually - guarantees the same embedder is used
+            # here and at query time (see embedding.py).
             self.collection.add(
                 documents=documents,
                 metadatas=metadatas,
-                embeddings=embeddings,
                 ids=ids
             )
             logger.info(f"Added {len(documents)} guide chunks to database")
@@ -190,12 +193,12 @@ class AgriWasteKnowledgeIngester:
         # Generate embeddings and add to collection
         if documents:
             logger.info(f"Generating embeddings for {len(documents)} safety chunks...")
-            embeddings = self.embedding_model.encode(documents).tolist()
-            
+            # Let the collection's bound embedding_function embed these documents,
+            # instead of encoding manually - guarantees the same embedder is used
+            # here and at query time (see embedding.py).
             self.collection.add(
                 documents=documents,
                 metadatas=metadatas,
-                embeddings=embeddings,
                 ids=ids
             )
             logger.info(f"Added {len(documents)} safety chunks to database")
@@ -231,12 +234,12 @@ class AgriWasteKnowledgeIngester:
         # Generate embeddings and add to collection
         if documents:
             logger.info(f"Generating embeddings for {len(documents)} market data entries...")
-            embeddings = self.embedding_model.encode(documents).tolist()
-            
+            # Let the collection's bound embedding_function embed these documents,
+            # instead of encoding manually - guarantees the same embedder is used
+            # here and at query time (see embedding.py).
             self.collection.add(
                 documents=documents,
                 metadatas=metadatas,
-                embeddings=embeddings,
                 ids=ids
             )
             logger.info(f"Added {len(documents)} market data entries to database")
@@ -270,12 +273,12 @@ class AgriWasteKnowledgeIngester:
         # Generate embeddings and add to collection
         if documents:
             logger.info(f"Generating embeddings for {len(documents)} buyer entries...")
-            embeddings = self.embedding_model.encode(documents).tolist()
-            
+            # Let the collection's bound embedding_function embed these documents,
+            # instead of encoding manually - guarantees the same embedder is used
+            # here and at query time (see embedding.py).
             self.collection.add(
                 documents=documents,
                 metadatas=metadatas,
-                embeddings=embeddings,
                 ids=ids
             )
             logger.info(f"Added {len(documents)} buyer entries to database")
@@ -293,7 +296,8 @@ class AgriWasteKnowledgeIngester:
             self.chroma_client.delete_collection("agri_waste_knowledge")
             self.collection = self.chroma_client.create_collection(
                 name="agri_waste_knowledge",
-                metadata={"description": "Agricultural waste processing knowledge base"}
+                metadata={"description": "Agricultural waste processing knowledge base"},
+                embedding_function=self.embedding_model
             )
             logger.info("Cleared existing collection and created new one")
         except:

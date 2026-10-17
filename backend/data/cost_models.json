@@ -1,0 +1,35 @@
+{
+  "_note": "C3 fix: these constants used to be bare literals inside calculator_agent.py, rounded to 2dp in every response as if they were measured. None of them are backed by a cited study - they are placeholder assumptions carried over from the original implementation. Moving them here makes that visible and makes them easy to calibrate per-region without a code change. Replace `source` with a real citation before treating this calculator's output as anything more precise than a rough estimate.",
+  "transportation_cost_per_kg": {
+    "value": 0.8,
+    "unit": "INR/kg",
+    "source": "UNSOURCED PLACEHOLDER - not derived from regional trucking rate data."
+  },
+  "storage_cost_per_kg": {
+    "value": 0.45,
+    "unit": "INR/kg",
+    "source": "UNSOURCED PLACEHOLDER - not derived from regional storage/warehousing rate data."
+  },
+  "biochar_yield_fraction": {
+    "value": 0.33,
+    "unit": "fraction of dry input mass converted to biochar",
+    "source": "UNSOURCED PLACEHOLDER - slow-pyrolysis biochar yields are typically cited in the 25-35% range depending on feedstock and process, but this value is not tied to a specific study or feedstock."
+  },
+  "biogas_yield_fraction": {
+    "value": 0.25,
+    "unit": "fraction of dry input mass converted to biogas",
+    "source": "UNSOURCED PLACEHOLDER - biogas yield is highly feedstock- and process-dependent; not tied to a specific study."
+  },
+  "co2_saved_per_kg": {
+    "value": 0.45,
+    "unit": "kg CO2-equivalent avoided per kg of waste diverted",
+    "source": "UNSOURCED PLACEHOLDER - not tied to a specific emissions-factor study or disposal-avoidance pathway."
+  },
+  "crop_yield_multipliers_kg_per_acre": {
+    "rice": {"value": 2000.0, "source": "UNSOURCED PLACEHOLDER"},
+    "sugarcane": {"value": 3000.0, "source": "UNSOURCED PLACEHOLDER"},
+    "vegetable": {"value": 1200.0, "source": "UNSOURCED PLACEHOLDER"},
+    "fruit": {"value": 800.0, "source": "UNSOURCED PLACEHOLDER"},
+    "default": {"value": 1000.0, "source": "Generic fallback used when the crop name is not recognized."}
+  }
+}

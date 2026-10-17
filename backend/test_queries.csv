@@ -24,3 +24,4 @@ test_id,waste_type,total_kg,region,expected_categories,description
 23,rice_husks,25,all,"on_farm_use",Very small quantity test case
 24,sugarcane_bagasse,2000,all,"process_and_sell",Very large quantity test case
 25,vegetable_trimmings,300,mumbai,"process_and_sell,local_sale",Urban vegetable market scenario
+26,unobtainium_scraps,50,all,"","ADVERSARIAL: waste type does not exist in the knowledge base at all. Expect near-zero sources_used and groundedness_score close to 1.0 (nothing to invent from), not a hallucinated answer. Low category F1 here is expected and uninformative - it only measures topic coverage, not correct decline."

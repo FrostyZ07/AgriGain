@@ -14,16 +14,14 @@ class RAGAgent(BaseAgent):
 
     def initialize(self) -> None:
         """
-        Verify that RAG service is initialized. If not, try to import from main.
+        No-op: rag_service is injected at construction time by main.py's
+        initialize_agent_registry(). (E5: this used to re-import `from main import
+        app_state` as a fallback, which never actually triggered since main.py
+        always passes rag_service in - it just added a needless circular-import
+        risk between the FastAPI app module and the agent layer.)
         """
         if not self.rag_service:
-            try:
-                from main import app_state
-                if app_state.rag_service:
-                    self.rag_service = app_state.rag_service
-                    logger.info("RAGAgent successfully bound to global rag_service.")
-            except Exception as e:
-                logger.warning(f"RAGAgent: Could not load global rag_service on init: {e}")
+            logger.warning("RAGAgent initialized without a rag_service - RAG calls will fail.")
 
     def validate(self, request: ToolRequest) -> bool:
         inp = request.input
@@ -52,11 +50,23 @@ class RAGAgent(BaseAgent):
 
             # Option A: waste_type, total_kg, region structured lookup
             if "waste_type" in inp:
-                waste_type = inp.get("waste_type")
-                total_kg = float(inp.get("total_kg") or inp.get("quantity") or 100.0)
+                # Normalize "rice straw" -> "rice_straw": the LLM caller writes
+                # waste_type in natural language, but the knowledge base's
+                # waste_type metadata (and CalculatorAgent's own lookup) use
+                # underscores. Without this, retrieval silently finds zero
+                # waste-type-specific matches for anything the model didn't
+                # happen to phrase with underscores.
+                waste_type = (inp.get("waste_type") or "").strip().lower().replace(" ", "_")
+                # C2 fix: total_kg used to silently default to 100.0 when unknown,
+                # asserting a fabricated quantity into the prompt as if it were
+                # given. None now flows through to rag_service, which describes
+                # it as "not specified" instead of a made-up number.
+                raw_qty = inp.get("total_kg") or inp.get("quantity")
+                total_kg = float(raw_qty) if raw_qty else None
                 region = inp.get("region") or inp.get("user_region") or "all"
-                
-                logger.info(f"RAGAgent executing waste lookup for {waste_type} ({total_kg}kg, {region})")
+
+                qty_log = f"{total_kg}kg" if total_kg is not None else "unspecified quantity"
+                logger.info(f"RAGAgent executing waste lookup for {waste_type} ({qty_log}, {region})")
                 rag_result = self.rag_service.get_grounded_opportunities(
                     waste_type=waste_type,
                     total_kg=total_kg,
@@ -90,7 +100,8 @@ class RAGAgent(BaseAgent):
                     "retrieved_documents": [
                         {
                             "id": doc["id"],
-                            "source_type": doc["metadata"].get("source_type", "unknown")
+                            "source_type": doc["metadata"].get("source_type", "unknown"),
+                            "distance": doc.get("distance"),
                         }
                         for doc in retrieved_docs
                     ]
@@ -123,11 +134,27 @@ class RAGAgent(BaseAgent):
                 source_type = doc.get("source_type", "unknown")
                 sources.append(f"{source_type}:{source_id}")
 
-            # 3. Calculate confidence score
-            # Simple heuristic score based on Gemini model settings or retrieved doc count
-            base_confidence = 0.85
-            if len(sources) > 0:
-                base_confidence = min(0.95, 0.85 + (len(sources) * 0.02))
+            # 3. Calculate confidence score from the BEST (closest) match distance,
+            # not the count of retrieved docs (A3 fix: the old version rewarded
+            # more results with higher confidence even when every extra result
+            # was irrelevant padding - and rag_service.py's own distance filtering
+            # now means a genuinely unanswerable query CAN come back with zero
+            # sources, so that case must be low confidence, not the old flat 0.85
+            # default).
+            distances = [
+                doc.get("distance") for doc in retrieved_docs
+                if doc.get("distance") is not None
+            ]
+            if not distances:
+                base_confidence = 0.3
+            else:
+                best_distance = min(distances)
+                # RAGService.MAX_RELEVANT_DISTANCE is the retrieval cutoff (A3) -
+                # a match right at that cutoff is barely relevant; a near-zero
+                # distance is a strong match.
+                max_relevant = getattr(self.rag_service, "MAX_RELEVANT_DISTANCE", 0.9)
+                base_confidence = 0.95 - (min(best_distance, max_relevant) / max_relevant) * 0.45
+                base_confidence = max(0.5, min(0.95, base_confidence))
             
             result = {
                 "opportunities_text": opp_text,

@@ -21,21 +21,25 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 import logging
+import threading
+import time
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import firebase_admin
 from firebase_admin import credentials, firestore
-from fastapi import FastAPI, HTTPException, Depends
+from firebase_admin import auth as firebase_auth
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 import json
 import chromadb
-from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from quantify import QuantificationService
 from rag_service import RAGService
+from embedding import get_embedding_function
 
 # Load environment variables
 load_dotenv()
@@ -94,10 +98,6 @@ class GetOpportunitiesRequest(BaseModel):
     userId: str = Field(..., description="Unique identifier for the user")
     waste_log_id: str = Field(..., description="ID of the waste log to generate opportunities for")
 
-class OpportunityCategory(BaseModel):
-    """Model for a single opportunity category"""
-    opportunities: list[str] = Field(default_factory=list, description="List of opportunity descriptions")
-
 class StructuredOpportunities(BaseModel):
     """Structured opportunities organized by category"""
     on_farm_use: list[str] = Field(default_factory=list, description="Direct on-farm applications")
@@ -147,28 +147,45 @@ def initialize_firebase():
     app_state.firestore_db = firestore.client()
     logger.info("Firestore client initialized")
 
-def initialize_chroma():
-    """Initialize ChromaDB connection"""
-    try:
-        app_state.chroma_client = chromadb.PersistentClient(path="chroma_db")
-        app_state.chroma_collection = app_state.chroma_client.get_collection("agri_waste_knowledge")
-        logger.info(f"ChromaDB initialized - collection has {app_state.chroma_collection.count()} documents")
-    except Exception as e:
-        logger.error(f"Failed to initialize ChromaDB: {e}")
-        # Create empty collection as fallback
-        try:
-            app_state.chroma_collection = app_state.chroma_client.create_collection("agri_waste_knowledge")
-            logger.warning("Created empty ChromaDB collection - run ingest.py first")
-        except:
-            logger.error("Could not create ChromaDB collection")
+CHROMA_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
 
 def initialize_ml_models():
-    """Initialize ML models for embeddings"""
+    """Initialize the shared embedding function (same one ingest.py uses)."""
     try:
-        app_state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("Sentence transformer model loaded")
+        app_state.embedding_model = get_embedding_function()
+        logger.info("Shared embedding function loaded")
     except Exception as e:
-        logger.error(f"Failed to load sentence transformer: {e}")
+        logger.error(f"Failed to load embedding function: {e}")
+
+def initialize_chroma():
+    """Initialize ChromaDB connection.
+
+    Must run AFTER initialize_ml_models(): the collection is bound to the same
+    embedding_function used at ingest time (see embedding.py) so query-time
+    embeddings land in the same vector space as the documents (A1 fix). Without
+    this, Chroma silently falls back to its own default embedder for queries.
+    """
+    try:
+        app_state.chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    except Exception as e:
+        logger.error(f"Failed to create ChromaDB client: {e}")
+        return
+
+    try:
+        app_state.chroma_collection = app_state.chroma_client.get_collection(
+            "agri_waste_knowledge", embedding_function=app_state.embedding_model
+        )
+        logger.info(f"ChromaDB initialized - collection has {app_state.chroma_collection.count()} documents")
+    except Exception as e:
+        logger.warning(f"Existing collection not found ({e}); creating an empty one")
+        # Create empty collection as fallback - client is guaranteed to exist here
+        try:
+            app_state.chroma_collection = app_state.chroma_client.create_collection(
+                "agri_waste_knowledge", embedding_function=app_state.embedding_model
+            )
+            logger.warning("Created empty ChromaDB collection - run ingest.py first")
+        except Exception as create_err:
+            logger.error(f"Could not create ChromaDB collection: {create_err}")
 
 def load_quantification_models():
     """Load quantification models from JSON file"""
@@ -221,15 +238,15 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Firebase initialization failed: {e}")
     
     try:
-        initialize_chroma()
-    except Exception as e:
-        logger.warning(f"ChromaDB initialization failed: {e}")
-    
-    try:
         initialize_ml_models()
     except Exception as e:
         logger.warning(f"ML models initialization failed: {e}")
-    
+
+    try:
+        initialize_chroma()
+    except Exception as e:
+        logger.warning(f"ChromaDB initialization failed: {e}")
+
     try:
         success = load_quantification_models()
         if not success:
@@ -258,21 +275,49 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Agricultural Waste Management API...")
 
 def initialize_agent_registry():
-    """Initialize and register agents with the global registry."""
+    """
+    Initialize and register agents with the global registry.
+
+    Each agent's `parameters`/`required` here IS the schema the ReAct agent's
+    Gemini function-calling sees (ToolRegistry.to_function_declarations) - this
+    replaces the old hand-written JSON schema in orchestrator/prompts.py that had
+    drifted from what these agents actually read (e.g. 'region' was declared
+    nowhere; the calculator's crop/area path wasn't declared at all).
+
+    `timeout_seconds` is enforced per agent in orchestrator/executor.py. calculator
+    is pure local arithmetic; rag and web_search each make a network + LLM call and
+    need real headroom - RAGService's own internal Gemini call timeout is 45s, so
+    the agent-level timeout here must exceed that or a slow-but-successful RAG call
+    gets discarded as a timeout for no reason.
+    """
     try:
         from backend.agents.calculator_agent import CalculatorAgent
         from backend.agents.rag_agent import RAGAgent
         from backend.agents.web_search_agent import WebSearchAgent
         from backend.registry.tool_registry import global_registry
-        from backend.models.tool_models import AgentMetadata
+        from backend.models.tool_models import AgentMetadata, ToolParameter
 
         calc = CalculatorAgent()
         calc.initialize()
         global_registry.register(calc, AgentMetadata(
             name="calculator",
             version="1.0",
-            description="Performs deterministic calculations",
-            supported_intents=["waste_estimation", "roi_analysis"]
+            description=(
+                "Deterministic agricultural calculations: waste weight from quantity/unit "
+                "or crop/area, revenue, transport/storage cost, ROI, biochar/biogas yield, "
+                "CO2 savings."
+            ),
+            supported_intents=["waste_estimation", "roi_analysis"],
+            timeout_seconds=5,
+            parameters={
+                "waste_type": ToolParameter(type="string", description="e.g. rice_straw, rice_husks, sugarcane_bagasse"),
+                "quantity": ToolParameter(type="number", description="Numeric amount, if using a unit-based estimate"),
+                "unit": ToolParameter(type="string", description="Unit of quantity, e.g. kg, tons, sacks, quintals"),
+                "crop": ToolParameter(type="string", description="Crop name, if using an acreage-based estimate instead"),
+                "area": ToolParameter(type="number", description="Area in acres, if using an acreage-based estimate"),
+                "region": ToolParameter(type="string", description="Region or state, for region-specific pricing"),
+            },
+            required=["waste_type"],
         ))
 
         rag = RAGAgent(rag_service=app_state.rag_service)
@@ -280,8 +325,19 @@ def initialize_agent_registry():
         global_registry.register(rag, AgentMetadata(
             name="rag",
             version="1.0",
-            description="Retrieves domain knowledge",
-            supported_intents=["knowledge_retrieval"]
+            description=(
+                "Retrieves domain knowledge from the knowledge base: composting/processing "
+                "methods, buyers, safety guidelines, and grounded monetization opportunities "
+                "for a specific waste type."
+            ),
+            supported_intents=["knowledge_retrieval"],
+            timeout_seconds=50,
+            parameters={
+                "waste_type": ToolParameter(type="string", description="e.g. rice_straw, rice_husks, sugarcane_bagasse"),
+                "total_kg": ToolParameter(type="number", description="Total kg of waste, if known (from a prior calculator call)"),
+                "region": ToolParameter(type="string", description="Region or state"),
+            },
+            required=[],
         ))
 
         web_search = WebSearchAgent(gemini_model=app_state.rag_service.model if app_state.rag_service else None)
@@ -289,8 +345,14 @@ def initialize_agent_registry():
         global_registry.register(web_search, AgentMetadata(
             name="web_search",
             version="1.0",
-            description="Performs real-time web search",
-            supported_intents=["market_intelligence"]
+            description="Real-time market prices and local buyers via web search.",
+            supported_intents=["market_intelligence"],
+            timeout_seconds=30,
+            parameters={
+                "waste_type": ToolParameter(type="string", description="e.g. rice_straw, rice_husks, sugarcane_bagasse"),
+                "region": ToolParameter(type="string", description="Region or state"),
+            },
+            required=[],
         ))
         logger.info("All Multi-Agent layers initialized successfully.")
     except Exception as e:
@@ -308,19 +370,93 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# D2 fix: allow_origins=["*"] with allow_credentials=True is an invalid CORS
+# combination that browsers reject outright. CORS_ORIGINS already existed in
+# .env.template, unused. Falls back to "*" (with credentials disabled, which
+# is the only way "*" is spec-legal) so the demo keeps working with no config.
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()] or ["*"]
+_cors_allow_credentials = _cors_origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# D5 fix: RATE_LIMIT_PER_MINUTE already existed in .env.template, unused. Each
+# request here can trigger several Gemini calls plus a Tavily search, so with
+# no limit at all a single client can run up real API cost. Simple per-IP
+# fixed-window counter, exempt from auth so it can't be starved by a broken
+# token; health/docs excluded so uptime monitoring never gets rate limited.
+# ponytail: single-process in-memory state behind a global lock - resets on
+# restart and doesn't share across workers. Move to a shared store (Redis)
+# if this runs with more than one worker process.
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+_rate_limit_lock = threading.Lock()
+_rate_limit_buckets: Dict[str, list] = {}
+_RATE_LIMIT_EXEMPT_PATHS = {"/health", "/", "/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if request.url.path in _RATE_LIMIT_EXEMPT_PATHS:
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window_start = now - 60.0
+    with _rate_limit_lock:
+        bucket = _rate_limit_buckets.setdefault(client_ip, [])
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if len(bucket) >= RATE_LIMIT_PER_MINUTE:
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Please slow down."})
+        bucket.append(now)
+
+    return await call_next(request)
 
 # Dependency to get database connections
 async def get_app_state() -> AppState:
     """Dependency to inject app state into endpoints"""
     return app_state
+
+# D1 fix: userId used to arrive in the request body and get used directly with
+# the Admin SDK to read/write artifacts/{appId}/users/{userId}/... - the Admin
+# SDK bypasses firestore.rules entirely (which carefully enforces
+# request.auth.uid == userId), so any caller could read or write any farmer's
+# data by guessing a uid.
+#
+# Gated behind AUTH_REQUIRED so the demo keeps running with no client changes;
+# set AUTH_REQUIRED=true before any real user data is involved. When enabled,
+# a valid Firebase ID token is required and its uid is the only thing trusted -
+# never the body.
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").strip().lower() == "true"
+
+
+def get_authenticated_uid(authorization: Optional[str] = Header(None)) -> Optional[str]:
+    """FastAPI dependency: verifies a Firebase ID token when AUTH_REQUIRED is on.
+    Returns None when auth is off (demo mode) or always the verified uid otherwise."""
+    if not AUTH_REQUIRED:
+        return None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization[len("Bearer "):]
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+        return decoded["uid"]
+    except Exception as e:
+        logger.warning(f"Token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def authorize_for_user(request_user_id: str, authenticated_uid: Optional[str]) -> None:
+    """Raise 403 if AUTH_REQUIRED is on and the token's uid doesn't match the
+    userId the request is acting on. No-op when auth is off."""
+    if AUTH_REQUIRED and authenticated_uid != request_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this user")
 
 # Basic health check endpoint
 @app.get("/")
@@ -337,15 +473,6 @@ async def root():
             "get_how_to_guide": "/get_how_to_guide/{guide_id}",
             "get_opportunities": "/get_opportunities"
         }
-    }
-
-@app.get("/debug/firestore")
-async def debug_firestore(state: AppState = Depends(get_app_state)):
-    """Debug endpoint to check Firestore state"""
-    return {
-        "firestore_db_is_none": state.firestore_db is None,
-        "firestore_db_type": str(type(state.firestore_db)),
-        "firestore_db_str": str(state.firestore_db)[:100] if state.firestore_db else "None"
     }
 
 @app.get("/health")
@@ -404,16 +531,36 @@ async def health_check(state: AppState = Depends(get_app_state)):
     except Exception as e:
         health_status["services"]["rag_service"] = f"error: {str(e)}"
         health_status["status"] = "degraded"
-    
+
+    # E4 fix: initialize_agent_registry() re-raises on failure at startup, after
+    # which every orchestrator call returns AGENT_NOT_FOUND - but /health had no
+    # way to reflect that; it would report "healthy" the whole time.
+    try:
+        from backend.registry.tool_registry import global_registry
+        agents = global_registry.list_agents()
+        expected = {"calculator", "rag", "web_search"}
+        if expected.issubset(set(agents)):
+            health_status["services"]["agent_registry"] = f"{len(agents)} agents registered: {sorted(agents)}"
+        else:
+            health_status["services"]["agent_registry"] = f"missing agents - only {sorted(agents)} registered"
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["services"]["agent_registry"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+
     health_status["timestamp"] = datetime.now(timezone.utc).isoformat()
     
     return health_status
 
 @app.post("/log_waste", response_model=LogWasteResponse)
-async def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_state)):
+def log_waste(
+    request: LogWasteRequest,
+    state: AppState = Depends(get_app_state),
+    authenticated_uid: Optional[str] = Depends(get_authenticated_uid),
+):
     """
     Log agricultural waste and calculate estimated weight in kilograms.
-    
+
     This endpoint:
     1. Validates the waste type and unit combination
     2. Calculates total weight using quantification models
@@ -421,6 +568,8 @@ async def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_
     4. Returns the log ID and estimated weight
     """
     try:
+        authorize_for_user(request.userId, authenticated_uid)
+
         # Validate inputs using quantification service
         if not state.quantification_models:
             raise HTTPException(status_code=503, detail="Quantification models not loaded")
@@ -480,7 +629,7 @@ async def log_waste(request: LogWasteRequest, state: AppState = Depends(get_app_
         raise
     except Exception as e:
         logger.error(f"Error logging waste: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/get_how_to_guide/{guide_id}", response_model=HowToGuideResponse)
 async def get_how_to_guide(guide_id: str, state: AppState = Depends(get_app_state)):
@@ -530,7 +679,7 @@ async def get_how_to_guide(guide_id: str, state: AppState = Depends(get_app_stat
         raise
     except Exception as e:
         logger.error(f"Error retrieving guide {guide_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/guides")
 async def list_guides():
@@ -562,7 +711,7 @@ async def list_guides():
         
     except Exception as e:
         logger.error(f"Error listing guides: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/quantification/info")
 async def get_quantification_info(state: AppState = Depends(get_app_state)):
@@ -583,7 +732,7 @@ async def get_quantification_info(state: AppState = Depends(get_app_state)):
         
     except Exception as e:
         logger.error(f"Error getting quantification info: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 def structure_opportunities_text(opportunities_text: str, rag_service: RAGService) -> Optional[StructuredOpportunities]:
     """
@@ -658,19 +807,25 @@ Return only the JSON object:"""
         return None
 
 @app.post("/get_opportunities", response_model=GetOpportunitiesResponse)
-async def get_opportunities(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def get_opportunities(
+    request: GetOpportunitiesRequest,
+    state: AppState = Depends(get_app_state),
+    authenticated_uid: Optional[str] = Depends(get_authenticated_uid),
+):
     """
     Get AI-powered waste monetization opportunities using RAG.
-    
+
     This endpoint implements the main RAG functionality:
     1. Fetches the waste log from Firestore using waste_log_id
-    2. Fetches the user's profile to get their region  
+    2. Fetches the user's profile to get their region
     3. Calls RAG service to generate grounded opportunities
     4. Optionally structures the response into JSON categories
-    
+
     As specified in devplan Phase 3.2 and 3.3.
     """
     try:
+        authorize_for_user(request.userId, authenticated_uid)
+
         # Check if RAG service is available
         if not state.rag_service:
             raise HTTPException(status_code=503, detail="RAG service not available")
@@ -767,7 +922,7 @@ async def get_opportunities(request: GetOpportunitiesRequest, state: AppState = 
         raise
     except Exception as e:
         logger.error(f"Error generating opportunities: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 class AIInsightRequest(BaseModel):
     """Request model for AI insights about agricultural waste"""
@@ -795,11 +950,17 @@ class TestOpportunitiesRequest(BaseModel):
     region: str = Field("all", description="Geographic region")
 
 @app.post("/test_opportunities", response_model=GetOpportunitiesResponse)
-async def test_opportunities(request: TestOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def test_opportunities(request: TestOpportunitiesRequest, state: AppState = Depends(get_app_state)):
     """
     Test endpoint for RAG opportunities without Firestore dependency.
     Useful for testing the RAG pipeline directly.
+
+    D3: disabled once AUTH_REQUIRED is on (i.e. once this is treated as a real
+    deployment) - it's a debug convenience with no user-scoping, not something
+    that should stay reachable in production.
     """
+    if AUTH_REQUIRED:
+        raise HTTPException(status_code=404, detail="Not found")
     try:
         # Check if RAG service is available
         if not state.rag_service:
@@ -845,10 +1006,10 @@ async def test_opportunities(request: TestOpportunitiesRequest, state: AppState 
         raise
     except Exception as e:
         logger.error(f"Error generating test opportunities: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/ai_insight", response_model=AIInsightResponse)
-async def get_ai_insight(request: AIInsightRequest, state: AppState = Depends(get_app_state)):
+def get_ai_insight(request: AIInsightRequest, state: AppState = Depends(get_app_state)):
     """
     Get AI-powered insights about agricultural waste questions.
     
@@ -963,17 +1124,23 @@ Knowledge Base Context:
 Provide a clear, practical answer in {language_name}. If the context doesn't contain enough information to answer the question, state that clearly and suggest what type of information would be needed."""
                         
                         try:
-                            response = state.rag_service.model.generate_content(
-                                knowledge_prompt,
-                                generation_config=state.rag_service.genai.types.GenerationConfig(
-                                    temperature=0.4,
-                                    max_output_tokens=1000
+                            # E2 fix: no timeout on this call.
+                            with ThreadPoolExecutor(max_workers=1) as executor:
+                                future = executor.submit(
+                                    state.rag_service.model.generate_content,
+                                    knowledge_prompt,
+                                    generation_config=state.rag_service.genai.types.GenerationConfig(
+                                        temperature=0.4,
+                                        max_output_tokens=1000
+                                    )
                                 )
-                            )
-                            
+                                response = future.result(timeout=20)
+
                             if response.text:
                                 knowledge_base_answer = response.text.strip()
-                                
+
+                        except FutureTimeoutError:
+                            logger.warning("Knowledge-based answer generation timed out after 20s")
                         except Exception as e:
                             logger.warning(f"Failed to generate knowledge-based answer: {e}")
                 
@@ -1005,18 +1172,28 @@ Provide specific, practical advice for farmers. Include:
 Keep the answer concise but comprehensive, suitable for farmers with varying education levels."""
                 
                 try:
-                    response = state.rag_service.model.generate_content(
-                        fallback_prompt,
-                        generation_config=state.rag_service.genai.types.GenerationConfig(
-                            temperature=0.5,
-                            max_output_tokens=1200
+                    # E2 fix: no timeout on this call.
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(
+                            state.rag_service.model.generate_content,
+                            fallback_prompt,
+                            generation_config=state.rag_service.genai.types.GenerationConfig(
+                                temperature=0.5,
+                                max_output_tokens=1200
+                            )
                         )
-                    )
-                    
+                        response = future.result(timeout=20)
+
                     if response.text:
                         final_answer = response.text.strip()
                         confidence_score = 0.7  # Lower confidence for fallback answers
-                        
+
+                except FutureTimeoutError:
+                    logger.error("Gemini fallback timed out after 20s")
+                    final_answer = "I apologize, but I'm unable to process your question at the moment due to a technical issue. Please try again later or contact support for assistance."
+                    if request.language.lower() != "english":
+                        final_answer += f"\n\nकृपया बाद में पुनः प्रयास करें या सहायता के लिए संपर्क करें।"
+                    confidence_score = 0.0
                 except Exception as e:
                     logger.error(f"Gemini fallback failed: {e}")
                     final_answer = f"I apologize, but I'm unable to process your question at the moment due to a technical issue. Please try again later or contact support for assistance."
@@ -1084,13 +1261,19 @@ def categorize_recommendations(recs: list) -> dict:
     }
 
 @app.post("/api/v2/recommend")
-async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(get_app_state)):
+def recommend(
+    request: GetOpportunitiesRequest,
+    state: AppState = Depends(get_app_state),
+    authenticated_uid: Optional[str] = Depends(get_authenticated_uid),
+):
     """
-    Unified endpoint that coordinates the Master ReAct Orchestrator.
+    Unified endpoint that coordinates the ReAct Orchestrator.
     It fetches waste details from Firestore, constructs a query,
-    executes the multi-agent graph, and returns the synthesized JSON response.
+    executes the agent loop, and returns the synthesized JSON response.
     """
     try:
+        authorize_for_user(request.userId, authenticated_uid)
+
         # Check database connections
         if not state.firestore_db:
             try:
@@ -1133,7 +1316,8 @@ async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(
 
         # 4. Execute Orchestrator
         from orchestrator.graph import run_orchestrator
-        orchestration_result = run_orchestrator(query, request_id=request.waste_log_id)
+        gemini_model = state.rag_service.model if state.rag_service else None
+        orchestration_result = run_orchestrator(query, request_id=request.waste_log_id, gemini_model=gemini_model)
 
         # Enrich response with waste_info and region for compatibility/logging
         if "waste_info" not in orchestration_result:
@@ -1189,47 +1373,47 @@ async def recommend(request: GetOpportunitiesRequest, state: AppState = Depends(
         raise
     except Exception as e:
         logger.error(f"Error executing recommendation orchestrator: {e}")
-        raise HTTPException(status_code=500, detail=f"Recommendation error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Recommendation error")
 
 
 @app.post("/investigations", response_model=StartInvestigationResponse)
-async def start_investigation(request: StartInvestigationRequest, state: AppState = Depends(get_app_state)):
+def start_investigation(request: StartInvestigationRequest, state: AppState = Depends(get_app_state)):
     """
     Translates raw user chat prompts into a series of progressive WorkspaceEvents
-    suitable for the agentic timeline visualization dashboard on the new frontend.
+    for the agentic timeline visualization dashboard.
+
+    B1 fix: this used to fabricate a fixed set of events - always the same three
+    recommendations (Biochar Production / Direct Sale to Factory / Aerobic
+    Composting) with hardcoded scores - regardless of what the orchestrator
+    actually did. It now walks the ReAct loop's real execution trace
+    (run_orchestrator_streaming) and builds one event per real turn/tool call, and
+    recommendation cards come from ResponseSynthesizer's evidence-grounded
+    generation (empty when there isn't enough evidence, rather than padded with
+    invented strategies).
     """
     import uuid
     import time
     session_id = f"sess_{uuid.uuid4().hex[:8]}"
     message = request.message
-    
-    # 1. Run the Orchestrator
-    from orchestrator.graph import run_orchestrator
-    try:
-        # Execute the LangGraph workflow on the query
-        res = run_orchestrator(message, request_id=session_id)
-    except Exception as e:
-        logger.error(f"Orchestrator failed during investigations endpoint: {e}")
-        # Revert to standard fallback events
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # 2. Extract results from orchestrator run
-    exec_meta = res.get("execution") or {}
-    tools_used = exec_meta.get("tools_used", [])
-    
-    # Check if the query is out of scope (no tools selected, explicitly stated, or parsed as out_of_scope)
-    intent_primary = res.get("intent", {}).get("primary") if isinstance(res.get("intent"), dict) else ""
-    if not intent_primary and "intent" in res:
-        intent_primary = res["intent"]
-
-    is_out_of_scope = (
-        (len(tools_used) == 0) or 
-        ("no waste" in message.lower()) or 
-        (intent_primary == "out_of_scope")
-    )
 
     def get_time():
         return time.strftime("%H:%M:%S")
+
+    gemini_model = state.rag_service.model if state.rag_service else None
+    from orchestrator.graph import run_orchestrator_streaming
+    try:
+        res, trace = run_orchestrator_streaming(message, request_id=session_id, gemini_model=gemini_model)
+    except Exception as e:
+        logger.error(f"Orchestrator failed during investigations endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    exec_meta = res.get("execution") or {}
+    tools_used = exec_meta.get("tools_used", [])
+    # B5 fix: replaces the old "no waste" in message.lower() substring check with
+    # the ReAct agent's own decision (react_agent.py sets this when the model,
+    # on turn 1, made no tool calls at all).
+    finish_reason = res.get("finish_reason")
+    is_out_of_scope = finish_reason == "out_of_scope"
 
     if is_out_of_scope:
         events = [
@@ -1244,19 +1428,6 @@ async def start_investigation(request: StartInvestigationRequest, state: AppStat
                     "title": "Request analyzed",
                     "detail": "Agri-Gain could not identify any crop type, waste type, or quantity in the input.",
                     "type": "conversation"
-                }
-            },
-            {
-                "type": "phase",
-                "phase": "planning",
-                "objective": "Execution plan bypassed",
-                "activeQuestion": "Explain options for non-agricultural queries.",
-                "timeline": {
-                    "id": f"t-plan-{uuid.uuid4().hex[:4]}",
-                    "time": get_time(),
-                    "title": "Strategy bypassed",
-                    "detail": "All calculator, RAG, and search routes skipped - input is out of scope.",
-                    "type": "planner"
                 }
             },
             {
@@ -1296,23 +1467,16 @@ async def start_investigation(request: StartInvestigationRequest, state: AppStat
                 "activeQuestion": "Please specify the type of crop waste and quantity (e.g. 5 tonnes sugarcane bagasse) to generate options."
             }
         ]
-        return StartInvestigationResponse(
-            sessionId=session_id,
-            events=events
-        )
+        return StartInvestigationResponse(sessionId=session_id, events=events)
 
     calc_data = res.get("calculations") or {}
     rag_data = res.get("knowledge_base") or {}
     search_data = res.get("market_information") or {}
     confidence = res.get("confidence_score", 0.85)
+    system_errors = res.get("system_errors") or []
 
     events = []
 
-    # Helper for timestamp formatting
-    def get_time():
-        return time.strftime("%H:%M:%S")
-
-    # Event 1: Phase change to Understanding
     events.append({
         "type": "phase",
         "phase": "understanding",
@@ -1326,280 +1490,185 @@ async def start_investigation(request: StartInvestigationRequest, state: AppStat
             "type": "conversation"
         }
     })
-
-    # Event 2: Phase change to Planning
     events.append({
         "type": "phase",
         "phase": "planning",
-        "objective": "Design dynamic agent execution plan",
-        "activeQuestion": "Identifying which tools will improve the recommendation quality.",
+        "objective": "Run the ReAct planning loop",
+        "activeQuestion": "Deciding which tools to call, one turn at a time.",
         "timeline": {
             "id": f"t-plan-{uuid.uuid4().hex[:4]}",
             "time": get_time(),
-            "title": "Execution plan created",
-            "detail": f"Selected parallel routes: {', '.join(tools_used)}",
+            "title": "ReAct loop started",
+            "detail": f"Agent will call tools as needed, up to {res.get('turns', '?')} turns.",
             "type": "planner"
         }
     })
 
-    # Event 3: Mark modules/tools running & completed progress
-    # A. Calculator Agent
-    if "calculator" in tools_used:
-        events.append({
-            "type": "planner",
-            "decisionId": "waste-analysis",
-            "status": "running",
-            "reason": "Resolving acreage yield and transport/handling metrics."
-        })
+    # Walk the REAL execution trace - one event per turn/tool call the graph
+    # actually made, in the order it made them.
+    TOOL_DECISION_ID = {"calculator": "waste-analysis", "rag": "knowledge-research", "web_search": "market-intelligence"}
+    TOOL_MODULE_ID = {"calculator": "calculator", "rag": "knowledge", "web_search": "market"}
+    seen_decisions = set()
+
+    for node_name, partial in trace:
+        if node_name == "agent":
+            for call in (partial.get("pending_calls") or []):
+                tool = call.get("tool")
+                decision_id = TOOL_DECISION_ID.get(tool)
+                if not decision_id:
+                    continue
+                seen_decisions.add(decision_id)
+                events.append({
+                    "type": "planner",
+                    "decisionId": decision_id,
+                    "status": "running",
+                    "reason": f"Turn {partial.get('turn', '?')}: calling {tool}({call.get('args', {})})"
+                })
+        elif node_name in TOOL_MODULE_ID:
+            tool_result = (partial.get("tool_results") or {}).get(node_name) or {}
+            status = tool_result.get("status")
+            result = tool_result.get("result") or {}
+            error = (tool_result.get("error") or {}).get("message")
+            module_id = TOOL_MODULE_ID[node_name]
+
+            if status == "success":
+                if node_name == "calculator":
+                    finding = f"Waste resolved to {result.get('estimated_waste', 0)} kg. ROI {result.get('roi', 0)}x."
+                elif node_name == "rag":
+                    finding = f"Retrieved {len(result.get('sources', []))} knowledge base sources."
+                else:
+                    finding = f"Market data: {result.get('market_price') or 'no price resolved'}. Buyers: {len(result.get('buyers', []))}."
+                module_status, quality = "completed", "high"
+            else:
+                finding = f"{node_name} did not return usable results: {error or 'unknown error'}"
+                module_status, quality = "unavailable", "unavailable"
+
+            events.append({
+                "type": "module",
+                "moduleId": module_id,
+                "status": module_status,
+                "progress": 100,
+                "latestFinding": finding,
+                "timeline": {
+                    "id": f"t-{module_id}-{uuid.uuid4().hex[:4]}",
+                    "time": get_time(),
+                    "title": f"{node_name} finished",
+                    "detail": finding,
+                    "type": "evidence"
+                }
+            })
+            events.append({
+                "type": "evidence",
+                "evidence": {
+                    "id": f"ev-{module_id}-{uuid.uuid4().hex[:4]}",
+                    "title": f"{node_name} result",
+                    "category": {"calculator": "Waste Analysis", "rag": "Knowledge Base", "web_search": "Market Intelligence"}[node_name],
+                    "summary": finding,
+                    "quality": quality,
+                    "impact": len(result) if status == "success" else 0
+                }
+            })
+            decision_id = TOOL_DECISION_ID[node_name]
+            seen_decisions.add(decision_id)
+            events.append({
+                "type": "planner",
+                "decisionId": decision_id,
+                "status": "completed" if status == "success" else "unavailable",
+                "reason": finding
+            })
+
+    for tool, decision_id in TOOL_DECISION_ID.items():
+        if decision_id not in seen_decisions:
+            events.append({
+                "type": "planner",
+                "decisionId": decision_id,
+                "status": "skipped",
+                "reason": f"The agent did not need {tool} for this query."
+            })
+
+    recommendation_cards = res.get("recommendation_cards") or []
+
+    if recommendation_cards:
+        top_id = recommendation_cards[0].get("id", "")
         events.append({
             "type": "module",
-            "moduleId": "calculator",
+            "moduleId": "ranking",
             "status": "completed",
             "progress": 100,
-            "latestFinding": f"Dry waste resolved to {calc_data.get('estimated_waste', 0)} kg. Revenue potential ₹{calc_data.get('estimated_revenue', 0)}.",
+            "latestFinding": f"Ranked {len(recommendation_cards)} evidence-grounded strategy option(s).",
+        })
+        events.append({
+            "type": "recommendations",
+            "recommendations": recommendation_cards,
+            "selectedRecommendationId": top_id,
             "timeline": {
-                "id": f"t-calc-{uuid.uuid4().hex[:4]}",
+                "id": f"t-recs-{uuid.uuid4().hex[:4]}",
                 "time": get_time(),
-                "title": "Waste calculations finished",
-                "detail": f"Calculated {calc_data.get('estimated_waste', 0)} kg weight with ROI multiple {calc_data.get('roi', 0)}x.",
-                "type": "evidence"
+                "title": "Recommendations compiled",
+                "detail": f"{len(recommendation_cards)} strategy option(s) ranked from gathered evidence.",
+                "type": "recommendation"
             }
-        })
-        events.append({
-            "type": "evidence",
-            "evidence": {
-                "id": f"ev-calc-{uuid.uuid4().hex[:4]}",
-                "title": "Material & ROI Estimates Confirmed",
-                "category": "Waste Analysis",
-                "summary": f"Calculations suggest a net profit of ₹{int(calc_data.get('estimated_revenue', 0) - (calc_data.get('transportation_cost', 0) + calc_data.get('storage_cost', 0)))} with CO2 savings of {calc_data.get('co2_saved', 0)} kg.",
-                "quality": "high",
-                "impact": 24
-            }
-        })
-    else:
-        events.append({
-            "type": "planner",
-            "decisionId": "waste-analysis",
-            "status": "skipped",
-            "reason": "No calculations required for this user query."
         })
 
-    # B. RAG Agent
-    if "rag" in tools_used:
-        events.append({
-            "type": "planner",
-            "decisionId": "knowledge-research",
-            "status": "running",
-            "reason": "Searching ChromaDB for verified utilization steps."
-        })
-        events.append({
-            "type": "module",
-            "moduleId": "knowledge",
-            "status": "completed",
-            "progress": 100,
-            "latestFinding": f"Retrieved {len(rag_data.get('sources', []))} reference docs. Standard agricultural guides loaded.",
-            "opportunities_text": rag_data.get("opportunities_text", ""),
-            "timeline": {
-                "id": f"t-rag-{uuid.uuid4().hex[:4]}",
-                "time": get_time(),
-                "title": "Domain research finished",
-                "detail": f"Located suitable composting and pyrolyzer guidelines.",
-                "type": "evidence"
-            }
-        })
-        events.append({
-            "type": "evidence",
-            "evidence": {
-                "id": f"ev-rag-{uuid.uuid4().hex[:4]}",
-                "title": "Agronomic Knowledge Ingested",
-                "category": "Knowledge Base",
-                "summary": rag_data.get("recommendations", ["No guides loaded."])[0] if rag_data.get("recommendations") else "Waste pathways matched to standard guide specifications.",
-                "quality": "high",
-                "impact": 20
-            }
-        })
-    else:
-        events.append({
-            "type": "planner",
-            "decisionId": "knowledge-research",
-            "status": "skipped",
-            "reason": "Static domain knowledge not required."
-        })
+        signals = []
+        if "calculator" in tools_used:
+            signals.append({"label": "Waste & ROI calculations", "value": 100, "direction": "positive"})
+        if "web_search" in tools_used:
+            has_price = bool(search_data.get("market_price"))
+            signals.append({"label": "Live market data", "value": 95 if has_price else 30,
+                             "direction": "positive" if has_price else "limiting"})
+        if "rag" in tools_used:
+            rag_conf = int(rag_data.get("confidence", 0.85) * 100)
+            signals.append({"label": "Knowledge base retrieval", "value": rag_conf, "direction": "positive"})
+        for err in system_errors[:3]:
+            signals.append({"label": err[:60], "value": 0, "direction": "limiting"})
 
-    # C. Web Search Agent
-    if "web_search" in tools_used:
         events.append({
-            "type": "planner",
-            "decisionId": "market-intelligence",
-            "status": "running",
-            "reason": "Scraping Tavily search results for local buyers."
-        })
-        events.append({
-            "type": "module",
-            "moduleId": "market",
-            "status": "completed",
-            "progress": 100,
-            "latestFinding": f"Scraped market prices: {search_data.get('market_price') or 'No live price resolved'}.",
-            "timeline": {
-                "id": f"t-search-{uuid.uuid4().hex[:4]}",
-                "time": get_time(),
-                "title": "Market signals scraped",
-                "detail": f"Live buyers list compiled: {', '.join(search_data.get('buyers', [])) or 'No specific factory names found'}",
-                "type": "evidence"
-            }
-        })
-        events.append({
-            "type": "evidence",
-            "evidence": {
-                "id": f"ev-search-{uuid.uuid4().hex[:4]}",
-                "title": "Live Market Intelligence Favorable",
-                "category": "Market Intelligence",
-                "summary": f"Resolved prices: {str(search_data.get('market_price', {})) or 'Historical average ₹5/kg used.'}. Local buyers count: {len(search_data.get('buyers', []))}.",
-                "quality": "medium",
-                "impact": 32
-            }
-        })
-    else:
-        events.append({
-            "type": "planner",
-            "decisionId": "market-intelligence",
-            "status": "skipped",
-            "reason": "Live market lookup skipped."
-        })
-
-    # 4. Generate Recommendations list from tool results
-    recs_list = res.get("recommendations") or ["Processing agricultural waste for maximum circular efficiency."]
-    
-    def find_summary_for_alt(alt_id, recs):
-        alt_id_lower = alt_id.lower()
-        keywords = {
-            "biochar": ["biochar", "pyrolysis", "carbon", "charcoal"],
-            "direct-sale": ["sale", "sell", "buyer", "factory", "market"],
-            "compost": ["compost", "fertilizer", "soil", "organic"],
-            "biogas": ["biogas", "methane", "energy", "power"]
-        }.get(alt_id_lower, [alt_id_lower])
-        
-        for rec in recs:
-            rec_lower = rec.lower()
-            if any(kw in rec_lower for kw in keywords):
-                return rec
-        return None
-
-    est_waste = calc_data.get("estimated_waste", 100.0)
-    est_rev = calc_data.get("estimated_revenue", 500.0)
-    roi_val = calc_data.get("roi", 2.0)
-    trans = calc_data.get("transportation_cost", 80.0)
-    storage = calc_data.get("storage_cost", 45.0)
-    total_cost = trans + storage
-    net_profit = est_rev - total_cost
-
-    recs_events = [
-        {
-            "id": "biochar",
-            "title": "Biochar Production",
-            "rank": 1,
+            "type": "confidence",
+            "recommendationId": top_id,
             "confidence": int(confidence * 100),
-            "expectedProfit": int(net_profit),
-            "roi": float(roi_val),
-            "investment": int(total_cost),
-            "timeline": "2 weeks",
-            "difficulty": "Medium",
-            "sustainabilityScore": 91,
-            "summary": find_summary_for_alt("biochar", recs_list) or "Thermochemical conversion into biochar yields highest net profit and circular sustainability.",
-            "advantages": ["Highest ROI", "Carbon capture credit value", "Very strong soil amendment value"],
-            "limitations": ["Upfront kiln setup cost", "Requires moisture controls"],
-            "drivers": [
-                {"label": "Market demand", "value": 32},
-                {"label": "Investment Fit", "value": 24},
-                {"label": "Carbon credit", "value": 18}
-            ]
-        },
-        {
-            "id": "direct-sale",
-            "title": "Direct Sale to Factory",
-            "rank": 2,
-            "confidence": int(confidence * 100 - 10),
-            "expectedProfit": int(est_rev * 0.7),
-            "roi": float(max(1.0, roi_val * 0.7)),
-            "investment": int(trans),
-            "timeline": "3 days",
-            "difficulty": "Low",
-            "sustainabilityScore": 58,
-            "summary": find_summary_for_alt("direct-sale", recs_list) or "Direct bulk dispatch to nearby biofuel boilers or brick kilns. Quick cash but lower margins.",
-            "advantages": ["Fastest liquidation", "Zero processing setup", "Low technical skill requirement"],
-            "limitations": ["Lower unit margin", "Subject to localized spot buyer demands"],
-            "drivers": [
-                {"label": "Speed", "value": 35},
-                {"label": "Low investment", "value": 28},
-                {"label": "Demand fit", "value": 15}
-            ]
-        },
-        {
-            "id": "compost",
-            "title": "Aerobic Composting",
-            "rank": 3,
-            "confidence": int(confidence * 100 - 20),
-            "expectedProfit": int(est_rev * 0.5),
-            "roi": float(max(1.0, roi_val * 0.5)),
-            "investment": int(storage * 2),
-            "timeline": "5 weeks",
-            "difficulty": "Medium",
-            "sustainabilityScore": 82,
-            "summary": find_summary_for_alt("compost", recs_list) or "Blend with crop residue to produce rich manure. Best for long-term circular agriculture.",
-            "advantages": ["Improves soil health directly", "Low equipment requirements", "Zero chemical residue"],
-            "limitations": ["Takes 5+ weeks of decomposition", "Requires substantial storage space"],
-            "drivers": [
-                {"label": "Soil value", "value": 30},
-                {"label": "Storage requirement", "value": 22},
-                {"label": "Zero waste", "value": 18}
-            ]
-        }
-    ]
-
-    events.append({
-        "type": "recommendations",
-        "recommendations": recs_events,
-        "selectedRecommendationId": "biochar",
-        "timeline": {
-            "id": f"t-recs-{uuid.uuid4().hex[:4]}",
-            "time": get_time(),
-            "title": "Recommendation compiled",
-            "detail": f"Ranks resolved: Biochar ranks #1 based on profit/sustainability trade-offs.",
-            "type": "recommendation"
-        }
-    })
-
-    # Event 5: Confidence Signals
-    events.append({
-        "type": "confidence",
-        "recommendationId": "biochar",
-        "confidence": int(confidence * 100),
-        "signals": [
-            {"label": "Waste yield verified", "value": int(confidence * 100 * 0.3), "direction": "positive"},
-            {"label": "Market demand verified", "value": int(confidence * 100 * 0.35), "direction": "positive"},
-            {"label": "Transport cost estimated", "value": 12, "direction": "limiting"}
-        ],
-        "timeline": {
-            "id": f"t-conf-{uuid.uuid4().hex[:4]}",
-            "time": get_time(),
-            "title": "Confidence score verified",
-            "detail": f"Confidence set to {int(confidence * 100)}% based on resolved data points.",
-            "type": "confidence"
-        }
-    })
-
-    # Event 6: Phase Ready
-    events.append({
-        "type": "phase",
-        "phase": "ready",
-        "objective": "Recommendation finalized",
-        "activeQuestion": "Inspect the timeline drivers, view evidence metrics, or ask follow-up refinements."
-    })
+            "signals": signals,
+            "timeline": {
+                "id": f"t-conf-{uuid.uuid4().hex[:4]}",
+                "time": get_time(),
+                "title": "Confidence score computed",
+                "detail": f"Confidence set to {int(confidence * 100)}% from {len(tools_used)} tool result(s).",
+                "type": "confidence"
+            }
+        })
+        events.append({
+            "type": "phase",
+            "phase": "ready",
+            "objective": "Recommendation finalized",
+            "activeQuestion": "Inspect the timeline drivers, view evidence metrics, or ask follow-up refinements."
+        })
+    else:
+        # Evidence was gathered but nothing was strong enough to rank - honest
+        # about the gap instead of padding with invented strategies (B1).
+        events.append({
+            "type": "recommendations",
+            "recommendations": [],
+            "selectedRecommendationId": "",
+            "timeline": {
+                "id": f"t-recs-{uuid.uuid4().hex[:4]}",
+                "time": get_time(),
+                "title": "No recommendation could be confidently ranked",
+                "detail": "Evidence was gathered but was not sufficient to support a ranked strategy.",
+                "type": "recommendation"
+            }
+        })
+        events.append({
+            "type": "phase",
+            "phase": "ready",
+            "objective": "Evidence gathered, but inconclusive",
+            "activeQuestion": "Try adding more detail (exact quantity, region, or waste type) to get ranked recommendations."
+        })
 
     return StartInvestigationResponse(
         sessionId=session_id,
         events=events
     )
+
 
 if __name__ == "__main__":
     import uvicorn

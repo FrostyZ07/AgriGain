@@ -1,11 +1,15 @@
+import time
 import uuid
 import logging
-from typing import Dict, Any
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from typing import Any, Callable, Dict
+
 from backend.registry.tool_registry import global_registry
 from backend.models.tool_models import ToolRequest, ToolResponse, ToolError
 from backend.orchestrator.state import AgentState
 
 logger = logging.getLogger(__name__)
+
 
 def _to_dict(model_obj: Any) -> Dict[str, Any]:
     """Helper to convert Pydantic models to JSON dicts safely."""
@@ -15,158 +19,104 @@ def _to_dict(model_obj: Any) -> Dict[str, Any]:
         return model_obj.dict()
     return model_obj
 
-def calculator_node(state: AgentState) -> Dict[str, Any]:
+
+def _observation_payload(response: ToolResponse) -> Dict[str, Any]:
+    """What gets handed back to the model as this tool's observation - errors
+    included, so the model can see a failure and adjust (retry with different
+    args, or move on) instead of the loop just dying."""
+    if response.status == "success":
+        return response.result or {}
+    return {"error": response.error.message if response.error else "unknown error"}
+
+
+def make_tool_node(tool_name: str) -> Callable[[AgentState], Dict[str, Any]]:
     """
-    LangGraph node to execute CalculatorAgent.
+    Build a LangGraph node function for one registered agent. Replaces the three
+    hand-written, near-identical calculator_node/rag_node/web_search_node functions
+    that each hardcoded their own input-building logic - now driven entirely by
+    `pending_calls`, the arguments the ReAct agent's function call actually asked
+    for, and by the agent's own AgentMetadata.timeout_seconds (declared before but
+    never enforced).
     """
-    logger.info("Executing Calculator Node...")
-    request_id = state.get("request_id", "unknown")
-    parsed_input = state.get("parsed_input") or {}
-    
-    agent = global_registry.get_agent("calculator")
-    if not agent:
-        err = ToolResponse(
-            request_id=request_id,
-            tool_name="calculator",
-            status="failed",
-            execution_time_ms=0,
-            error=ToolError(code="AGENT_NOT_FOUND", message="Calculator Agent is not registered in ToolRegistry.")
-        )
-        return {
-            "tool_results": {"calculator": _to_dict(err)},
-            "errors": ["Calculator Agent not registered"]
+
+    def node(state: AgentState) -> Dict[str, Any]:
+        request_id = state.get("request_id", "unknown")
+        calls = [c for c in (state.get("pending_calls") or []) if c.get("tool") == tool_name]
+        if not calls:
+            return {}
+
+        call = calls[0]
+        if len(calls) > 1:
+            # Observed model behavior is one call per tool per turn; if the model
+            # ever asks for the same tool twice in one turn with different args,
+            # run the first and let the second be considered on a later turn
+            # rather than silently overwriting one response with the other.
+            logger.warning(
+                f"{tool_name}: {len(calls) - 1} extra call(s) this turn ignored "
+                f"(one call per tool per turn is supported)"
+            )
+
+        agent = global_registry.get_agent(tool_name)
+        metadata = global_registry.get_metadata(tool_name)
+        timeout = metadata.timeout_seconds if metadata else 5
+
+        if not agent:
+            response = ToolResponse(
+                request_id=request_id,
+                tool_name=tool_name,
+                status="failed",
+                execution_time_ms=0,
+                error=ToolError(code="AGENT_NOT_FOUND", message=f"{tool_name} agent is not registered"),
+            )
+        else:
+            req = ToolRequest(
+                request_id=request_id,
+                tool_name=tool_name,
+                execution_id=f"exec_{tool_name}_{uuid.uuid4()}",
+                input=call["args"],
+            )
+            start_time = time.time()
+            try:
+                # AgentMetadata.timeout_seconds enforced here - previously declared
+                # and never read anywhere.
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(agent.execute, req)
+                    response = future.result(timeout=timeout)
+            except FutureTimeoutError:
+                execution_time = int((time.time() - start_time) * 1000)
+                logger.error(f"{tool_name} exceeded its {timeout}s timeout")
+                response = ToolResponse(
+                    request_id=request_id,
+                    tool_name=tool_name,
+                    status="timeout",
+                    execution_time_ms=execution_time,
+                    error=ToolError(code="TIMEOUT", message=f"{tool_name} exceeded {timeout}s timeout"),
+                )
+            except Exception as e:
+                execution_time = int((time.time() - start_time) * 1000)
+                logger.error(f"Error executing {tool_name} node: {e}")
+                response = ToolResponse(
+                    request_id=request_id,
+                    tool_name=tool_name,
+                    status="failed",
+                    execution_time_ms=execution_time,
+                    error=ToolError(code="NODE_EXECUTION_FAILURE", message=str(e)),
+                )
+
+        update: Dict[str, Any] = {
+            "tool_results": {tool_name: _to_dict(response)},
+            "observations_this_turn": [
+                {"tool": tool_name, "args": call["args"], "payload": _observation_payload(response)}
+            ],
         }
+        if response.status != "success":
+            err_msg = response.error.message if response.error else "unknown error"
+            update["errors"] = [f"{tool_name} failure: {err_msg}"]
+        return update
 
-    # Construct request
-    req = ToolRequest(
-        request_id=request_id,
-        tool_name="calculator",
-        execution_id=f"exec_calc_{uuid.uuid4()}",
-        input=parsed_input
-    )
+    return node
 
-    try:
-        response = agent.execute(req)
-        return {"tool_results": {"calculator": _to_dict(response)}}
-    except Exception as e:
-        logger.error(f"Error executing Calculator Node: {e}")
-        err = ToolResponse(
-            request_id=request_id,
-            tool_name="calculator",
-            status="failed",
-            execution_time_ms=0,
-            error=ToolError(code="NODE_EXECUTION_FAILURE", message=str(e))
-        )
-        return {
-            "tool_results": {"calculator": _to_dict(err)},
-            "errors": [f"Calculator failure: {str(e)}"]
-        }
 
-def rag_node(state: AgentState) -> Dict[str, Any]:
-    """
-    LangGraph node to execute RAGAgent.
-    """
-    logger.info("Executing RAG Node...")
-    request_id = state.get("request_id", "unknown")
-    parsed_input = state.get("parsed_input") or {}
-    user_query = state.get("user_query", "")
-
-    agent = global_registry.get_agent("rag")
-    if not agent:
-        err = ToolResponse(
-            request_id=request_id,
-            tool_name="rag",
-            status="failed",
-            execution_time_ms=0,
-            error=ToolError(code="AGENT_NOT_FOUND", message="RAG Agent is not registered in ToolRegistry.")
-        )
-        return {
-            "tool_results": {"rag": _to_dict(err)},
-            "errors": ["RAG Agent not registered"]
-        }
-
-    # Construct RAG request input. Support both structured fields and user query fallback
-    rag_input = {
-        "query": user_query,
-        "waste_type": parsed_input.get("waste_type"),
-        "total_kg": parsed_input.get("quantity") or parsed_input.get("estimated_waste"),
-        "region": parsed_input.get("region") or "all"
-    }
-
-    req = ToolRequest(
-        request_id=request_id,
-        tool_name="rag",
-        execution_id=f"exec_rag_{uuid.uuid4()}",
-        input=rag_input
-    )
-
-    try:
-        response = agent.execute(req)
-        return {"tool_results": {"rag": _to_dict(response)}}
-    except Exception as e:
-        logger.error(f"Error executing RAG Node: {e}")
-        err = ToolResponse(
-            request_id=request_id,
-            tool_name="rag",
-            status="failed",
-            execution_time_ms=0,
-            error=ToolError(code="NODE_EXECUTION_FAILURE", message=str(e))
-        )
-        return {
-            "tool_results": {"rag": _to_dict(err)},
-            "errors": [f"RAG failure: {str(e)}"]
-        }
-
-def web_search_node(state: AgentState) -> Dict[str, Any]:
-    """
-    LangGraph node to execute WebSearchAgent.
-    """
-    logger.info("Executing Web Search Node...")
-    request_id = state.get("request_id", "unknown")
-    parsed_input = state.get("parsed_input") or {}
-    user_query = state.get("user_query", "")
-
-    agent = global_registry.get_agent("web_search")
-    if not agent:
-        err = ToolResponse(
-            request_id=request_id,
-            tool_name="web_search",
-            status="failed",
-            execution_time_ms=0,
-            error=ToolError(code="AGENT_NOT_FOUND", message="Web Search Agent is not registered in ToolRegistry.")
-        )
-        return {
-            "tool_results": {"web_search": _to_dict(err)},
-            "errors": ["Web Search Agent not registered"]
-        }
-
-    # Construct search request input
-    search_input = {
-        "query": user_query,
-        "waste_type": parsed_input.get("waste_type"),
-        "region": parsed_input.get("region") or "all"
-    }
-
-    req = ToolRequest(
-        request_id=request_id,
-        tool_name="web_search",
-        execution_id=f"exec_search_{uuid.uuid4()}",
-        input=search_input
-    )
-
-    try:
-        response = agent.execute(req)
-        return {"tool_results": {"web_search": _to_dict(response)}}
-    except Exception as e:
-        logger.error(f"Error executing Web Search Node: {e}")
-        err = ToolResponse(
-            request_id=request_id,
-            tool_name="web_search",
-            status="failed",
-            execution_time_ms=0,
-            error=ToolError(code="NODE_EXECUTION_FAILURE", message=str(e))
-        )
-        return {
-            "tool_results": {"web_search": _to_dict(err)},
-            "errors": [f"Web search failure: {str(e)}"]
-        }
+calculator_node = make_tool_node("calculator")
+rag_node = make_tool_node("rag")
+web_search_node = make_tool_node("web_search")
